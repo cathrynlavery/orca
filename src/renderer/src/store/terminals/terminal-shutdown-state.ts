@@ -26,7 +26,8 @@ export function commitTerminalShutdownState({
   sleepingAgentSessionRecords,
   sleepingPaneKeys,
   tabs,
-  worktreeId
+  worktreeId,
+  scopedTabIds
 }: {
   exitGuardPtyIds: readonly string[]
   get: TerminalStoreGet
@@ -38,6 +39,8 @@ export function commitTerminalShutdownState({
   sleepingPaneKeys?: readonly string[]
   tabs: readonly TerminalTab[]
   worktreeId: string
+  /** Only these tabs' panes are the target host's; the rest of the worktree is a twin's. */
+  scopedTabIds?: ReadonlySet<string>
 }): void {
   settleAttentionRemovedBy(set, get, () =>
     set((state) => {
@@ -46,7 +49,9 @@ export function commitTerminalShutdownState({
         : {
             ...state.tabsByWorktree,
             [worktreeId]: (state.tabsByWorktree[worktreeId] ?? []).map((tab, index) =>
-              clearTransientTerminalState(tab, index)
+              scopedTabIds && !scopedTabIds.has(tab.id)
+                ? tab
+                : clearTransientTerminalState(tab, index)
             )
           }
       // Why copy-on-write everywhere below: a worktree whose panes already exited hits
@@ -153,6 +158,8 @@ export function commitTerminalShutdownState({
         }
       }
     })
+  } else if (scopedTabIds) {
+    get().clearSleepingAgentSessionsByPaneKey(sleepingPaneKeys ?? [])
   } else {
     get().clearSleepingAgentSessionsByWorktree(worktreeId)
   }
@@ -160,9 +167,16 @@ export function commitTerminalShutdownState({
   get().dropAgentStatusByWorktree(worktreeId, {
     shutdownReason,
     sleepingPaneKeys,
-    retainedCompletionEvidence
+    retainedCompletionEvidence,
+    ...(scopedTabIds ? { tabIds: scopedTabIds } : {})
   })
-  get().clearPaneForegroundAgentByWorktree(worktreeId)
+  if (scopedTabIds) {
+    for (const tabId of scopedTabIds) {
+      get().clearPaneForegroundAgentByTabPrefix(tabId)
+    }
+  } else {
+    get().clearPaneForegroundAgentByWorktree(worktreeId)
+  }
   const settledPtyIds = exitGuardPtyIds.filter((ptyId) => !get().isPtyShutdownPending(ptyId))
   markCommittedPtyShutdowns(settledPtyIds)
   settleDeferredPtyShutdownExits(settledPtyIds, 'committed')

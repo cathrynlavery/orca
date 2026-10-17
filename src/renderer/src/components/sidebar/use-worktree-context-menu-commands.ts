@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { hostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
 import type { useAppStore } from '@/store'
 import type { Repo } from '../../../../shared/repo-types'
 import { getRepoExecutionHostId } from '../../../../shared/execution-host'
@@ -144,17 +145,23 @@ export function useWorktreeContextMenuCommands(args: {
     })
   }, [args])
   const sleepWorktreesAfterMenuClose = useCallback(
-    (worktreeIds: string[]) => {
+    (worktrees: readonly Worktree[]) => {
       args.setMenuOpenState(false)
-      window.setTimeout(() => void runSleepWorktrees(worktreeIds), 50)
+      // Why the row's host: a twin on another host shares the id and must stay awake.
+      const targets = worktrees.map((worktree) =>
+        worktree.hostId
+          ? hostWorktreeTarget({ id: worktree.id, hostId: worktree.hostId })
+          : worktree.id
+      )
+      window.setTimeout(() => void runSleepWorktrees(targets), 50)
     },
     [args]
   )
   const handleCloseTerminals = useCallback(() => {
-    sleepWorktreesAfterMenuClose(args.sleepableWorktrees.map((item) => item.id))
+    sleepWorktreesAfterMenuClose(args.sleepableWorktrees)
   }, [args.sleepableWorktrees, sleepWorktreesAfterMenuClose])
   const handleSleepSubtree = useCallback(() => {
-    sleepWorktreesAfterMenuClose(args.subtreeSleepableWorktrees.map((item) => item.id))
+    sleepWorktreesAfterMenuClose(args.subtreeSleepableWorktrees)
   }, [args.subtreeSleepableWorktrees, sleepWorktreesAfterMenuClose])
   const handleDelete = useCallback(() => {
     const restoreSidebarPosition = preserveDeleteSiblingPosition(args.scopeRef.current)

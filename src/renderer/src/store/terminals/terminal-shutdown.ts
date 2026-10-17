@@ -11,6 +11,11 @@ import type { TerminalSlice, TerminalStoreGet, TerminalStoreSet } from './termin
 import { equalStringSets, sortedUniquePtyIds } from './terminal-pty-identities'
 import { resolveRuntimeOwnerForWorktree } from '@/lib/worktree-runtime-owner'
 import { resolveTerminalTeardownOwner } from './terminal-teardown-owner'
+import {
+  resolveHostTwinTeardownOwner,
+  resolveHostTwinTerminalScope,
+  worktreeIdOfTarget
+} from './host-twin-terminal-scope'
 import { createTerminalShutdownGuardController } from './terminal-shutdown-guards'
 import { commitTerminalShutdownState } from './terminal-shutdown-state'
 import { ORCA_LAYOUT_OWNER_IS_MAIN } from '../../../../shared/layout-owner-switch'
@@ -28,20 +33,32 @@ export function createTerminalShutdownActions(
   get: TerminalStoreGet
 ): Pick<TerminalSlice, 'shutdownWorktreeTerminals'> {
   return {
-    shutdownWorktreeTerminals: async (worktreeId, opts) => {
+    shutdownWorktreeTerminals: async (target, opts) => {
+      const worktreeId = worktreeIdOfTarget(target)
       const keepIdentifiers = opts?.keepIdentifiers ?? false
       const shutdownReason: AgentStatusWorktreeShutdownReason =
         opts?.shutdownReason ?? (keepIdentifiers ? 'manual-sleep' : 'remove-worktree')
-      const tabs = get().tabsByWorktree[worktreeId] ?? []
+      // Why: with a twin on another host, only the target host's tabs and panes are stopped.
+      const twinScope = resolveHostTwinTerminalScope(get(), target)
+      const tabs = (get().tabsByWorktree[worktreeId] ?? []).filter(
+        (tab) => !twinScope || twinScope.tabIds.has(tab.id)
+      )
+      const sleepingPaneKeys = twinScope
+        ? twinScope.paneKeys.filter(
+            (key) => !opts?.sleepingPaneKeys || opts.sleepingPaneKeys.includes(key)
+          )
+        : opts?.sleepingPaneKeys
       const rendererShutdownPtyIds = sortedUniquePtyIds(
         tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
       )
       const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
       const backendOwnsPtyTeardown = opts?.backendOwnsPtyTeardown === true
-      const teardownOwner = resolveTerminalTeardownOwner(
-        resolveRuntimeOwnerForWorktree(get(), worktreeId),
-        rendererShutdownPtyIds
-      )
+      const teardownOwner = twinScope
+        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds)
+        : resolveTerminalTeardownOwner(
+            resolveRuntimeOwnerForWorktree(get(), worktreeId),
+            rendererShutdownPtyIds
+          )
       // Why: treating an unattributable owner as local skips the host stop yet still clears
       // bindings and writes resume records, so the agent runs on unseen and wake starts a twin.
       // A backend-owned teardown already stopped its PTYs, so it has nothing to misroute.
@@ -58,7 +75,7 @@ export function createTerminalShutdownActions(
       const exitGuardPtyIds = rendererShutdownPtyIds
       const sleepingAgentSessionRecords = keepIdentifiers
         ? collectSleepingAgentSessionRecordsForWorktree(get(), worktreeId, {
-            paneKeys: opts?.sleepingPaneKeys,
+            paneKeys: sleepingPaneKeys,
             ...(shutdownReason === 'manual-sleep' ? { captureMode: 'manual-worktree-sleep' } : {}),
             ...(shutdownReason === 'auto-hibernate-completed-agent'
               ? { captureMode: 'completed-agent-hibernation' }
@@ -67,11 +84,7 @@ export function createTerminalShutdownActions(
         : {}
       const retainedCompletionEvidence =
         shutdownReason === 'auto-hibernate-completed-agent'
-          ? collectHibernatedCompletionEvidenceForWorktree(
-              get(),
-              worktreeId,
-              opts?.sleepingPaneKeys
-            )
+          ? collectHibernatedCompletionEvidenceForWorktree(get(), worktreeId, sleepingPaneKeys)
           : []
       const guards = createTerminalShutdownGuardController({
         exitGuardPtyIds,
@@ -186,9 +199,10 @@ export function createTerminalShutdownActions(
         set,
         shutdownReason,
         sleepingAgentSessionRecords,
-        sleepingPaneKeys: opts?.sleepingPaneKeys,
+        sleepingPaneKeys,
         tabs,
-        worktreeId
+        worktreeId,
+        scopedTabIds: twinScope?.tabIds
       })
     }
   }

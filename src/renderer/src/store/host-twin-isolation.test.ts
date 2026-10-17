@@ -160,8 +160,14 @@ const TWIN_ACTIONS: readonly TwinAction[] = [
     id: 'kill terminals',
     source: 'store/terminals/terminal-shutdown.ts shutdownWorktreeTerminals',
     appliesTo: () => true,
-    // Why raw id: the entry point cannot name a host yet (Stage 1.3 HostWorktreeTarget).
-    run: (f) => settle(() => f.store.getState().shutdownWorktreeTerminals(f.workspaceKey)),
+    run: (f, target) =>
+      settle(() =>
+        f.store
+          .getState()
+          .shutdownWorktreeTerminals(
+            hostWorktreeTarget({ id: f.workspaceKey, hostId: target.hostId })
+          )
+      ),
     applied: (f, target) =>
       expect(f.store.getState().ptyIdsByTabId[target.terminalTabId] ?? []).toEqual([])
   },
@@ -169,7 +175,12 @@ const TWIN_ACTIONS: readonly TwinAction[] = [
     id: 'sleep',
     source: 'components/sidebar/sleep-worktree-flow.ts sleepWorktreesReportingFailures',
     appliesTo: () => true,
-    run: (f) => settle(() => sleepWorktreesReportingFailures([f.workspaceKey])),
+    run: (f, target) =>
+      settle(() =>
+        sleepWorktreesReportingFailures([
+          hostWorktreeTarget({ id: f.workspaceKey, hostId: target.hostId })
+        ])
+      ),
     applied: (f, target) =>
       expect(f.store.getState().ptyIdsByTabId[target.terminalTabId] ?? []).toEqual([])
   },
@@ -205,8 +216,6 @@ function everyCell(actionId: string, reason: string, kinds = TWIN_KINDS): [strin
 
 /** `<action> | <kind> | <target>` → why the survivor is touched today (tracker Stage 1 worklist). */
 const KNOWN_TWIN_LEAKS: Readonly<Record<string, string>> = Object.fromEntries([
-  ...everyCell('kill terminals', 'takes a raw worktree id, so it stops both twins’ PTYs'),
-  ...everyCell('sleep', 'takes a raw worktree id, so it sleeps both twins'),
   [
     'remove project | local+runtime | local',
     'a sleeping-agent record with no host evidence is dropped instead of kept for the survivor'

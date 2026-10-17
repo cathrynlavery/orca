@@ -19,10 +19,15 @@ export function createAgentStatusWorktreeDropActions(
     dropAgentStatusByWorktree: (worktreeId, opts?: DropAgentStatusByWorktreeOptions) => {
       let hadLive = false
       set((s) => {
-        const tabPrefixes = (s.tabsByWorktree[worktreeId] ?? []).map((tab) => `${tab.id}:`)
+        const scopedTabIds = opts?.tabIds
+        const tabPrefixes = (s.tabsByWorktree[worktreeId] ?? [])
+          .filter((tab) => !scopedTabIds || scopedTabIds.has(tab.id))
+          .map((tab) => `${tab.id}:`)
+        // Why: with a twin on another host, an entry matched by worktree id alone may be the twin's.
+        const inWorktree = (id: string | undefined): boolean => !scopedTabIds && id === worktreeId
         const liveEntries = Object.entries(s.agentStatusByPaneKey).filter(
           ([paneKey, entry]) =>
-            entry.worktreeId === worktreeId || paneKeyMatchesAnyTabPrefix(paneKey, tabPrefixes)
+            inWorktree(entry.worktreeId) || paneKeyMatchesAnyTabPrefix(paneKey, tabPrefixes)
         )
         const liveKeys = liveEntries.map(([paneKey]) => paneKey)
         const liveKeySet = new Set(liveKeys)
@@ -32,14 +37,14 @@ export function createAgentStatusWorktreeDropActions(
         const retainedKeys = Object.entries(s.retainedAgentsByPaneKey)
           .filter(
             ([paneKey, retained]) =>
-              retained.worktreeId === worktreeId || paneKeyMatchesAnyTabPrefix(paneKey, tabPrefixes)
+              inWorktree(retained.worktreeId) || paneKeyMatchesAnyTabPrefix(paneKey, tabPrefixes)
           )
           .map(([paneKey]) => paneKey)
         const retainedKeySet = new Set(retainedKeys)
         const migrationUnsupported = pruneMigrationUnsupportedEntries(
           s.migrationUnsupportedByPtyId,
           (entry) =>
-            entry.worktreeId === worktreeId ||
+            inWorktree(entry.worktreeId) ||
             (entry.paneKey ? paneKeyMatchesAnyTabPrefix(entry.paneKey, tabPrefixes) : false)
         )
         const allowedPaneKeys = normalizePaneKeySet(opts?.sleepingPaneKeys)

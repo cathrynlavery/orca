@@ -36,6 +36,8 @@ export type DropAgentStatusByWorktreeOptions = {
   shutdownReason?: AgentStatusWorktreeShutdownReason
   sleepingPaneKeys?: readonly string[] | ReadonlySet<string>
   retainedCompletionEvidence?: readonly RetainedAgentEntry[]
+  /** Only these tabs' panes, when a twin on another host shares the worktree id. */
+  tabIds?: ReadonlySet<string>
 }
 
 export type DropHibernatedAgentPaneOptions = {

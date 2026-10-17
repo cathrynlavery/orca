@@ -18,6 +18,7 @@ import type {
 } from '../slices/terminal-tab-title-batch'
 import type { NativeChatLaunchDraft, NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 import type { AgentStatusWorktreeShutdownReason } from '../slices/agent-status'
+import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
 import type {
   TerminalTabCloseReason,
   TerminalTabRetirementPlan
@@ -139,8 +140,9 @@ export type TerminalActions = {
   /** Records the relay's own answer that a PTY id is gone; the one `exited` a respawn may act on. */
   markPtySourceDisowned: (ptyId: string) => void
   /** Awaited verified shutdown; unlike closeTab, physical teardown gates the state commit. */
+  /** A host target with a twin on another host stops only that host's tabs and panes. */
   shutdownWorktreeTerminals: (
-    worktreeId: string,
+    target: string | HostWorktreeTarget,
     opts?: {
       keepIdentifiers?: boolean
       shutdownReason?: AgentStatusWorktreeShutdownReason

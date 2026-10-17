@@ -7,6 +7,11 @@ import {
 } from '@/lib/worktree-sleep-intent'
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
 import { translate } from '@/i18n/i18n'
+import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
+import {
+  resolveHostTwinTerminalScope,
+  worktreeIdOfTarget
+} from '@/store/terminals/host-twin-terminal-scope'
 
 /**
  * Shared "sleep worktree" flow (close all panels to free memory / CPU)
@@ -21,9 +26,12 @@ import { translate } from '@/i18n/i18n'
  * Centralizing the sequence here keeps that safety invariant in one place so
  * a new caller can't accidentally skip it.
  */
-export async function runSleepWorktree(worktreeId: string): Promise<void> {
-  await runSleepWorktrees([worktreeId])
+export async function runSleepWorktree(target: SleepWorktreeTarget): Promise<void> {
+  await runSleepWorktrees([target])
 }
+
+/** A raw id sleeps the whole worktree; a host target sleeps only that host's copy of a twin. */
+export type SleepWorktreeTarget = string | HostWorktreeTarget
 
 function getSidebarWorktreeOptions(worktreeId: string): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-worktree-id]')).filter(
@@ -135,12 +143,12 @@ function describeSleepFailure(error: unknown): string {
   )
 }
 
-export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise<void> {
-  const { errors } = await sleepWorktreesReportingFailures(worktreeIds)
+export async function runSleepWorktrees(targets: readonly SleepWorktreeTarget[]): Promise<void> {
+  const { errors } = await sleepWorktreesReportingFailures(targets)
   if (errors.length > 0) {
     // Why: callers are fire-and-forget; surface actionable teardown failures after restoring retryable UI state.
     toast.error(
-      worktreeIds.length === 1
+      targets.length === 1
         ? translate(
             'auto.components.sidebar.sleep.worktree.flow.8bc3fc0671',
             'Failed to sleep workspace'
@@ -160,47 +168,70 @@ export type WorktreeSleepOutcome = { failedWorktreeIds: string[]; errors: string
 
 /** The sleep without the toast, for callers that report failures themselves. */
 export async function sleepWorktreesReportingFailures(
-  worktreeIds: readonly string[]
+  targets: readonly SleepWorktreeTarget[]
 ): Promise<WorktreeSleepOutcome> {
-  if (worktreeIds.length === 0) {
+  if (targets.length === 0) {
     return { failedWorktreeIds: [], errors: [] }
   }
   const {
     activeWorktreeId,
+    activeWorkspaceExecutionHostId,
     setActiveWorktree,
     shutdownWorktreeBrowsers,
     shutdownWorktreeTerminals
   } = useAppStore.getState()
-  const sleptActiveWorktreeId =
-    activeWorktreeId && worktreeIds.includes(activeWorktreeId) ? activeWorktreeId : null
-  if (sleptActiveWorktreeId) {
+  // Why: the sleep-intent marker, browsers and VM suspension are keyed by the raw id, so while
+  // another host's copy stays awake they belong to it too. Only that host's terminals sleep, and
+  // the marker is left alone: set, it would hold the awake copy's pane connects, and that copy's
+  // next bind would clear it and re-arm the slept copy's panes anyway.
+  const twinTargets = new Set(
+    targets.filter((target) => resolveHostTwinTerminalScope(useAppStore.getState(), target))
+  )
+  const sleptActiveTarget = targets.find(
+    (target) =>
+      worktreeIdOfTarget(target) === activeWorktreeId &&
+      (!twinTargets.has(target) ||
+        (typeof target !== 'string' && target.hostId === activeWorkspaceExecutionHostId))
+  )
+  const sleptActiveWorktreeId = sleptActiveTarget ? activeWorktreeId : null
+  if (sleptActiveTarget && sleptActiveWorktreeId) {
     const restoreSidebarPosition = preserveSidebarWorktreePosition(sleptActiveWorktreeId)
     // Why: clearing the active workspace can unmount TerminalPanes before
     // shutdownWorktreeTerminals writes PTY suppressions; mark first so those
     // exits do not stamp activity. Kept off the store so it cannot disturb the
     // sidebar's scroll restoration.
-    markWorktreeSleepIntent(sleptActiveWorktreeId)
+    if (!twinTargets.has(sleptActiveTarget)) {
+      markWorktreeSleepIntent(sleptActiveWorktreeId)
+    }
     setActiveWorktree(null)
     restoreSidebarPosition()
   }
   const errors: string[] = []
   const failedWorktreeIds = new Set<string>()
+  const failedTargets = new Set<SleepWorktreeTarget>()
   try {
-    for (const worktreeId of worktreeIds) {
+    for (const target of targets) {
+      const worktreeId = worktreeIdOfTarget(target)
+      const twin = twinTargets.has(target)
       // Why: the marker outlives teardown so the panes left mounted stay cold
       // until an explicit wake (#10205); mark per workspace so an earlier
       // slow teardown never leaves a later, still-awake one marked.
-      markWorktreeSleepIntent(worktreeId)
+      if (!twin) {
+        markWorktreeSleepIntent(worktreeId)
+      }
       try {
         // Why: sleep mirrors removeWorktree's shutdown sequence — browsers first
         // so destroyPersistentWebview unregisters the Chromium guests before any
         // other teardown runs, terminals second so the PTY kill uses the same
         // ordering on both paths. Without the browser thunk here, sleep leaks
         // browserPagesByWorkspace entries and live webviews for the slept worktree.
-        await withWorktreeSleepTeardown(worktreeId, () => shutdownWorktreeBrowsers(worktreeId))
+        if (!twin) {
+          await withWorktreeSleepTeardown(worktreeId, () => shutdownWorktreeBrowsers(worktreeId))
+        }
       } catch (err) {
         console.error('[sleep-worktree] browser shutdown failed', { worktreeId, error: err })
         failedWorktreeIds.add(worktreeId)
+        failedTargets.add(target)
         errors.push(describeSleepFailure(err))
         continue
       }
@@ -213,13 +244,13 @@ export async function sleepWorktreesReportingFailures(
         // serializer buffers into buffersByLeafId for SSH wake to reseed
         // scrollback. See DESIGN_DOC_TERMINAL_HISTORY_FIX_V2.md §3.3.c.
         await withWorktreeSleepTeardown(worktreeId, async () => {
-          await shutdownWorktreeTerminals(worktreeId, { keepIdentifiers: true })
-          if (typeof window !== 'undefined' && window.api?.ephemeralVm?.suspendWorkspace) {
+          await shutdownWorktreeTerminals(target, { keepIdentifiers: true })
+          if (!twin && typeof window !== 'undefined' && window.api?.ephemeralVm?.suspendWorkspace) {
             await window.api.ephemeralVm.suspendWorkspace({ workspaceId: worktreeId })
           }
         })
         // Why: a workspace the user activated during the batch is awake by their choice.
-        if (useAppStore.getState().activeWorktreeId === worktreeId) {
+        if (!twin && useAppStore.getState().activeWorktreeId === worktreeId) {
           clearWorktreeSleepIntent(worktreeId)
         }
       } catch (err) {
@@ -228,16 +259,23 @@ export async function sleepWorktreesReportingFailures(
           error: err
         })
         failedWorktreeIds.add(worktreeId)
+        failedTargets.add(target)
         errors.push(describeSleepFailure(err))
       }
     }
   } finally {
     // Why: a failed sleep leaves the workspace awake and retryable.
-    for (const worktreeId of failedWorktreeIds) {
-      clearWorktreeSleepIntent(worktreeId)
+    for (const target of failedTargets) {
+      if (!twinTargets.has(target)) {
+        clearWorktreeSleepIntent(worktreeIdOfTarget(target))
+      }
     }
-    if (sleptActiveWorktreeId && failedWorktreeIds.has(sleptActiveWorktreeId)) {
-      setActiveWorktree(sleptActiveWorktreeId)
+    if (sleptActiveTarget && sleptActiveWorktreeId && failedTargets.has(sleptActiveTarget)) {
+      if (typeof sleptActiveTarget !== 'string' && twinTargets.has(sleptActiveTarget)) {
+        setActiveWorktree(sleptActiveWorktreeId, sleptActiveTarget.hostId)
+      } else {
+        setActiveWorktree(sleptActiveWorktreeId)
+      }
     }
   }
   return { failedWorktreeIds: [...failedWorktreeIds], errors }
