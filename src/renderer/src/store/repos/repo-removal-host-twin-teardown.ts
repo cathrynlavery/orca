@@ -15,7 +15,12 @@ export type RemovedHostTwins = {
   /** Twin ids with the hosts that still publish them. */
   twinHostIds: Map<string, ExecutionHostId[]>
   /** Per attributed host (a paired runtime's copy names its SSH host), its surfaces there. */
-  byHost: { hostId: ExecutionHostId; removed: RemovedHostTwinState }[]
+  byHost: {
+    hostId: ExecutionHostId
+    /** This host's own twin ids with their survivors. */
+    twinHostIds: ReadonlyMap<string, readonly ExecutionHostId[]>
+    removed: RemovedHostTwinState
+  }[]
 }
 
 /** The removed copy's ids that another host still publishes, matched as the purge matches them. */
@@ -34,6 +39,7 @@ export function collectRemovedHostTwins(
     twinHostIds: new Map(scopes.flatMap(([, twins]) => [...twins])),
     byHost: scopes.map(([attributedHostId, twins]) => ({
       hostId: attributedHostId,
+      twinHostIds: twins,
       removed: collectRemovedHostTwinState(state, new Set(twins.keys()), attributedHostId, twins)
     }))
   }
@@ -57,7 +63,10 @@ export function closeRemovedHostTwinState(
   ])
   // Why pre-call hosts too: a concurrent removal of the other copy can leave no twin to rescan.
   for (const hostId of new Set([...twins.byHost, ...preCall.byHost].map((entry) => entry.hostId))) {
-    const removed = twins.byHost.find((entry) => entry.hostId === hostId)?.removed
+    const current = twins.byHost.find((entry) => entry.hostId === hostId)
+    const removed = current?.removed
+    // Why this host's ids only: another attributed host's survivor may be this host.
+    const hostTwinIds = current?.twinHostIds ?? new Map<string, readonly ExecutionHostId[]>()
     // Why: a host frame during the call can drop a tab without closeTab's agent and cache cleanup.
     const terminalTabIds = new Set([
       ...(removed?.terminalTabIds ?? []),
@@ -118,13 +127,13 @@ export function closeRemovedHostTwinState(
     }))
     // Why: a pending chat's tab can already be gone, so its launch is cancelled through the registry.
     cancelStructuredLaunchesForWorktrees(
-      new Set(twins.twinHostIds.keys()),
+      new Set(hostTwinIds.keys()),
       (worktreeId, launchHostId) =>
         removedHostCanonicalizer(
           get(),
           worktreeId,
           hostId,
-          twins.twinHostIds.get(worktreeId) ?? []
+          hostTwinIds.get(worktreeId) ?? []
         )(launchHostId) === hostId
     )
     for (const fileId of removed?.fileIds ?? []) {
