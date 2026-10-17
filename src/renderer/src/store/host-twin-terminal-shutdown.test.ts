@@ -231,4 +231,21 @@ describe('kill and sleep on one host of a twin', () => {
     await vi.waitFor(() => expect(generation(f.remote.terminalTabId)).toBe(1))
     expect(generation(f.local.terminalTabId)).toBe(0)
   })
+
+  it('remounts a previously opened copy when it is woken again', async () => {
+    const f = twin()
+    clearWorktreeSleepIntent(f.workspaceKey)
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+    f.store.getState().setActiveWorktree(null)
+    await sleepWorktreesReportingFailures([hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })])
+    const generation = (tabId: string) =>
+      f.store.getState().tabsByWorktree[f.workspaceKey]?.find((tab) => tab.id === tabId)
+        ?.generation ?? 0
+    const before = generation(f.remote.terminalTabId)
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+
+    expect(generation(f.remote.terminalTabId)).toBe(before + 1)
+    expect(generation(f.local.terminalTabId)).toBe(0)
+  })
 })

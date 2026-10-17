@@ -53,6 +53,16 @@ export function createSetActiveWorktree(
     if (get().activeWorktreeId !== worktreeId) {
       moveFocusToRendererBeforeFocusedWebviewHidden()
     }
+    // Why: opening one host's copy of a twin wakes only that copy; the others stay asleep.
+    const twinScope =
+      worktreeId && executionHostId
+        ? resolveHostTwinTerminalScope(
+            get(),
+            hostWorktreeTarget({ id: worktreeId, hostId: executionHostId })
+          )
+        : null
+    const inWokenCopy = (tab: { id: string }): boolean =>
+      isWakeable(tab) && (!twinScope || twinScope.tabIds.has(tab.id))
     let shouldPrepareTerminalTabs = false
     let shouldTagTerminalTabs = false
     set((current) => {
@@ -98,7 +108,7 @@ export function createSetActiveWorktree(
       // Tag every tab on FIRST activation so reattach/fresh-spawn updateTabPtyId suppresses activity + sortEpoch bumps.
       // Generation is only bumped when no tab has a live PTY — a live remount would kill the user's shell.
       const tabs = s.tabsByWorktree[worktreeId ?? ''] ?? []
-      const wakeable = tabs.filter(isWakeable)
+      const wakeable = tabs.filter(inWokenCopy)
       const allDead =
         worktreeId != null &&
         wakeable.length > 0 &&
@@ -121,7 +131,10 @@ export function createSetActiveWorktree(
             : s.activeRepoId
       const tabsByWorktreeUpdate =
         allDead && worktreeId != null
-          ? markWorktreeTabsForActivationSpawn(s, worktreeId, { isWakeable, bumpGeneration: true })
+          ? markWorktreeTabsForActivationSpawn(s, worktreeId, {
+              isWakeable: inWokenCopy,
+              bumpGeneration: true
+            })
           : {}
 
       const nextActiveTabTypeByWorktree =
@@ -173,14 +186,6 @@ export function createSetActiveWorktree(
     // Why: any activation is an explicit wake (null is the sleep flow clearing selection).
     // Cleared after the set() above so a pane still waiting on the marker connects once,
     // in the remounted generation, instead of connecting and then being remounted.
-    // Why: opening one host's copy of a twin wakes only that copy; the others stay asleep.
-    const twinScope =
-      worktreeId && executionHostId
-        ? resolveHostTwinTerminalScope(
-            get(),
-            hostWorktreeTarget({ id: worktreeId, hostId: executionHostId })
-          )
-        : null
     const worktreeTabIds = worktreeId
       ? (get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
       : []
@@ -192,8 +197,6 @@ export function createSetActiveWorktree(
     if (worktreeId) {
       clearTabSleepIntent(worktreeId, twinScope?.tabIds ?? worktreeTabIds)
     }
-    const inWokenCopy = (tab: { id: string }): boolean =>
-      isWakeable(tab) && (!twinScope || twinScope.tabIds.has(tab.id))
 
     if (worktreeId && shouldPrepareTerminalTabs) {
       const prepareTerminalTabs = (): void => {
