@@ -426,7 +426,7 @@ describe('removing a remote project keeps its local twin', () => {
     ])
   })
 
-  it('removing the local copy closes its stale editor tabs and keeps mixed tabs and shared history', async () => {
+  it('removing the local copy closes its stale editor tabs and stops the local pane in a mixed tab', async () => {
     const store = seedTwins()
     const closedBrowser = (id: string, browserRuntimeEnvironmentId: string | null) => ({
       workspace: browserWorkspace(id),
@@ -491,8 +491,9 @@ describe('removing a remote project keeps its local twin', () => {
       'tab-mixed',
       'tab-foreign'
     ])
-    // The mixed tab stays whole for its runtime pane; its local pane is left stale, not killed.
     expect(ptyKill).not.toHaveBeenCalledWith(remotePtyId)
+    // The mixed tab stays for its runtime pane, but the removed local pane's shell is stopped.
+    expect(ptyKill).toHaveBeenCalledWith('pty-mixed-local')
     expect(
       state.recentlyClosedEditorTabsByWorktree[WORKTREE_ID]?.map((snapshot) => snapshot.filePath)
     ).toContain('/work/same/old-remote.ts')
@@ -546,7 +547,7 @@ describe('removing a remote project keeps its local twin', () => {
     )
   })
 
-  it('keeps a tab that gained a surviving pane during removal', async () => {
+  it('keeps a tab that gained a surviving pane during removal and stops its removed pane', async () => {
     const store = seedTwins()
     store.setState((s) => ({
       unifiedTabsByWorktree: {
@@ -570,6 +571,7 @@ describe('removing a remote project keeps its local twin', () => {
     expect(store.getState().tabsByWorktree[WORKTREE_ID]?.map((tab) => tab.id)).toEqual([
       'tab-local'
     ])
+    expect(ptyKill).toHaveBeenCalledWith('pty-local')
     expect(ptyKill).not.toHaveBeenCalledWith(remotePtyId)
   })
 

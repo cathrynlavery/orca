@@ -102,6 +102,12 @@ export function closeRemovedHostTwinState(
         precomputedRetirementPlan: plan
       })
     }
+    // Why: the tab stays for its surviving pane, but this host's shell in it must not outlive the project.
+    for (const ptyId of remoteCloseOwnedByHost ? [] : removed.mixedTabPtyIds) {
+      if (!killedPtyIds.has(ptyId) && !isRemoteRuntimePtyId(ptyId)) {
+        window.api.pty.kill(ptyId)
+      }
+    }
     // Why: a parked or restored pane has no exit callback left to clear these; shared PTYs are not in the plans' lists.
     set((state) => ({
       suppressedPtyExitIds: omitRecordKeys(state.suppressedPtyExitIds, retiredPtyIds),
