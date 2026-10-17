@@ -20,9 +20,12 @@ export function createAgentStatusWorktreeDropActions(
       let hadLive = false
       set((s) => {
         const scopedTabIds = opts?.tabIds
-        const tabPrefixes = (s.tabsByWorktree[worktreeId] ?? [])
-          .filter((tab) => !scopedTabIds || scopedTabIds.has(tab.id))
-          .map((tab) => `${tab.id}:`)
+        // Why the scope itself: a restored terminal may exist only as a unified tab.
+        const tabPrefixes = (
+          scopedTabIds
+            ? [...scopedTabIds]
+            : (s.tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
+        ).map((tabId) => `${tabId}:`)
         // Why: with a twin on another host, an entry matched by worktree id alone may be the twin's.
         const inWorktree = (id: string | undefined): boolean => !scopedTabIds && id === worktreeId
         const liveEntries = Object.entries(s.agentStatusByPaneKey).filter(

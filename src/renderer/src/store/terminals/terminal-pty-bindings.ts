@@ -8,6 +8,7 @@ import {
 } from './terminal-pty-identities'
 import { omitUnverifiedPtyLossTabIds } from './terminal-unverified-pty-loss'
 import {
+  clearCopySleepIntent,
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
   hasWorktreeSleepIntent
@@ -211,6 +212,11 @@ export function createTerminalPtyBindingActions(
       clearWorktreeSleepIntent(worktreeId)
       if (worktreeId) {
         clearTabSleepIntent(worktreeId, [tabId])
+        // Why: a bound PTY wakes its whole copy, as it wakes a whole worktree without a twin.
+        const copyHostId = resolveTwinTerminalTabHost(get(), worktreeId, tabId)
+        if (copyHostId) {
+          clearCopySleepIntent(worktreeId, copyHostId)
+        }
       }
       // Why: activation spawns come from clicking a worktree, not work in it — skip the lastActivityAt stamp and sortEpoch bump; other spawn reasons still bump.
       if (worktreeId && !wasActivationSpawn && !isRemoteRuntimeMirror) {

@@ -221,4 +221,76 @@ describe('per-tab sleep fences of a twin', () => {
 
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
   })
+
+  it('leaves an unclaimed tab running when an earlier copy of the batch failed to stop', async () => {
+    const f = twin()
+    addTab(f, 'tab-unclaimed', 'pty-x')
+    ptyKill.mockImplementation((ptyId: string) => {
+      if (ptyId === f.local.ptyId) {
+        throw new Error('terminal_kill_failed')
+      }
+    })
+
+    const outcome = await sleepWorktreesReportingFailures(both(f))
+
+    expect(outcome.failedWorktreeIds).toEqual([f.workspaceKey])
+    expect(killedPtyIds()).not.toContain('pty-x')
+  })
+
+  it('reopening one copy after an every-copy sleep remounts its unstamped split tab', async () => {
+    const f = twin('local+runtime')
+    const tabId = f.local.terminalTabId
+    f.store.setState((s) => ({
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [tabId]: [f.local.ptyId, 'pty-local-2'] },
+      terminalLayoutsByTabId: {
+        ...s.terminalLayoutsByTabId,
+        [tabId]: {
+          ...s.terminalLayoutsByTabId[tabId],
+          ptyIdsByLeafId: { 'leaf-1': f.local.ptyId, 'leaf-2': 'pty-local-2' }
+        }
+      },
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+          tab.id === tabId ? { ...tab, executionHostId: undefined } : tab
+        )
+      }
+    }))
+    await sleepWorktreesReportingFailures(both(f))
+    const generation = () =>
+      f.store.getState().tabsByWorktree[f.workspaceKey]?.find((tab) => tab.id === tabId)
+        ?.generation ?? 0
+    const before = generation()
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, 'local')
+
+    expect(generation()).toBe(before + 1)
+    expect(hasPaneSleepIntent(f.workspaceKey, tabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+  })
+
+  it("drops a unified-only terminal's agent state when its copy is stopped", async () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: [
+          ...(s.unifiedTabsByWorktree[f.workspaceKey] ?? []),
+          {
+            ...(s.unifiedTabsByWorktree[f.workspaceKey] ?? [])[0],
+            id: 'tab-unified-only',
+            entityId: 'tab-unified-only',
+            executionHostId: f.remote.hostId
+          }
+        ]
+      },
+      acknowledgedAgentsByPaneKey: { 'tab-unified-only:leaf-1': 1 }
+    }))
+
+    await f.store
+      .getState()
+      .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }))
+
+    expect(
+      f.store.getState().acknowledgedAgentsByPaneKey['tab-unified-only:leaf-1']
+    ).toBeUndefined()
+  })
 })

@@ -213,9 +213,10 @@ export async function sleepWorktreesReportingFailures(
     // shutdownWorktreeTerminals writes PTY suppressions; mark first so those
     // exits do not stamp activity. Kept off the store so it cannot disturb the
     // sidebar's scroll restoration.
-    if (sleptActivePlan.copyOnly) {
+    if (sleptActivePlan.copyOnly || sleptActivePlan.everyCopy) {
       newlyFencedByPlan.set(sleptActivePlan, fenceCopy(sleptActivePlan))
-    } else {
+    }
+    if (!sleptActivePlan.copyOnly) {
       markWorktreeSleepIntent(activeWorktreeId)
     }
     setActiveWorktree(null)
@@ -236,9 +237,12 @@ export async function sleepWorktreesReportingFailures(
       // Why: the marker outlives teardown so the panes left mounted stay cold
       // until an explicit wake (#10205); mark per workspace so an earlier
       // slow teardown never leaves a later, still-awake one marked.
-      if (copyOnly) {
+      // Why per copy for every-copy batches too: its sleep removes the PTY evidence that
+      // attributes some tabs, so reopening one copy must find exactly what it fenced.
+      if (copyOnly || plan.everyCopy) {
         newlyFencedByPlan.set(plan, [...(newlyFencedByPlan.get(plan) ?? []), ...fenceCopy(plan)])
-      } else {
+      }
+      if (!copyOnly) {
         markWorktreeSleepIntent(worktreeId)
       }
       try {
@@ -265,7 +269,15 @@ export async function sleepWorktreesReportingFailures(
         const teardown = async (): Promise<void> => {
           await shutdownWorktreeTerminals(target, {
             keepIdentifiers: true,
-            ...(plan.everyCopy ? { unattributedTabs: plan.unattributedTabs } : {})
+            // Why skip after a failure: an unclaimed tab may be the failed copy's, still running.
+            ...(plan.everyCopy
+              ? {
+                  unattributedTabs:
+                    plan.unattributedTabs === 'stop' && hasFailed(worktreeId)
+                      ? 'skip'
+                      : plan.unattributedTabs
+                }
+              : {})
           })
           if (
             plan.suspendsSharedVm &&
@@ -288,9 +300,10 @@ export async function sleepWorktreesReportingFailures(
         if (
           planIsSelectedCopy(now, plan, now.activeWorktreeId, now.activeWorkspaceExecutionHostId)
         ) {
-          if (copyOnly) {
+          if (newlyFencedByPlan.has(plan)) {
             clearTabSleepIntent(worktreeId, newlyFencedByPlan.get(plan) ?? [])
-          } else {
+          }
+          if (!copyOnly) {
             clearWorktreeSleepIntent(worktreeId)
           }
         }
@@ -301,20 +314,14 @@ export async function sleepWorktreesReportingFailures(
   } finally {
     // Why: a failed sleep leaves the workspace awake and retryable.
     for (const plan of failedPlans) {
-      if (plan.copyOnly) {
-        // Why only new fences: a failed repeat sleep must not wake a copy that is already asleep.
+      // Why only new fences: a failed repeat sleep must not wake a copy that is already asleep.
+      if (newlyFencedByPlan.has(plan)) {
         clearTabSleepIntent(plan.worktreeId, newlyFencedByPlan.get(plan) ?? [])
-        continue
       }
-      if (plan.everyCopy) {
-        // Why: the shared marker goes, so copies that did sleep keep a per-tab fence.
-        for (const slept of plans) {
-          if (slept.worktreeId === plan.worktreeId && !failedPlans.has(slept)) {
-            fenceCopy(slept)
-          }
-        }
+      // Why: copies of an every-copy batch that did sleep keep their per-copy fences.
+      if (!plan.copyOnly) {
+        clearWorktreeSleepIntent(plan.worktreeId)
       }
-      clearWorktreeSleepIntent(plan.worktreeId)
     }
     if (sleptActivePlan && activeWorktreeId && failedPlans.has(sleptActivePlan)) {
       const { target } = sleptActivePlan
