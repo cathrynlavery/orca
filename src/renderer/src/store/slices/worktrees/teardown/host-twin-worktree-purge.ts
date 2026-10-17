@@ -70,9 +70,10 @@ function resolvePurgedPublishers(
   }
   const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceId
   const repoId = getRepoIdFromWorktreeId(worktreeId)
+  // Null-tolerant: narrow store adapters (sleep-flow callers in tests) omit the catalogs.
   const rows: PublisherRow[] = [
-    ...(s.worktreesByRepo[repoId] ?? []),
-    ...(s.detectedWorktreesByRepo[repoId]?.worktrees ?? [])
+    ...(s.worktreesByRepo?.[repoId] ?? []),
+    ...(s.detectedWorktreesByRepo?.[repoId]?.worktrees ?? [])
   ].filter((row) => row.id === worktreeId)
   const survivors = new Set<ExecutionHostId>()
   for (const row of rows) {
