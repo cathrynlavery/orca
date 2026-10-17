@@ -40,6 +40,8 @@ export type HostTwinTerminalScope = {
   unattributedTabIds: ReadonlySet<string>
   /** Whether the target's tabs still name a PTY (layout, reconnect or relay hint). */
   hasPtyEvidence: boolean
+  /** The other hosts that publish the id; their own copies stop their PTYs. */
+  otherHostIds: readonly ExecutionHostId[]
 }
 
 type TerminalTabOwners = {
@@ -199,7 +201,8 @@ export function resolveHostTwinTerminalScope(
         tabOwner === null && hasEvidence(tabId) ? [tabId] : []
       )
     ),
-    hasPtyEvidence: [...tabIds].some(hasEvidence)
+    hasPtyEvidence: [...tabIds].some(hasEvidence),
+    otherHostIds: twinHostIds.get(target.worktreeId) ?? []
   }
 }
 

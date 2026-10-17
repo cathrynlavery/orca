@@ -2,6 +2,7 @@ import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buff
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
 import { requestRemoteWorktreeSleep } from '@/runtime/remote-worktree-sleep'
+import { getPtyExecutionHost } from '../../../../shared/terminal-execution-host'
 import {
   collectHibernatedCompletionEvidenceForWorktree,
   collectSleepingAgentSessionRecordsForWorktree,
@@ -60,14 +61,13 @@ export function createTerminalShutdownActions(
       const rendererShutdownPtyIds = sortedUniquePtyIds(
         tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
       )
-      // Why own tabs only: panes of split or unclaimed tabs that another copy already stopped
-      // must not pick this copy's host.
+      // Why: a pane another copy of the batch stops on its own host must not pick this copy's
+      // host; a pane naming a host outside the twin still routes this stop, as a raw id would.
       const ownPtyIds = twinScope
-        ? sortedUniquePtyIds(
-            tabs
-              .filter((tab) => twinScope.tabIds.has(tab.id))
-              .flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
-          )
+        ? rendererShutdownPtyIds.filter((ptyId) => {
+            const host = getPtyExecutionHost(ptyId)
+            return !host || host === 'foreign' || !twinScope.otherHostIds.includes(host)
+          })
         : rendererShutdownPtyIds
       const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
       const backendOwnsPtyTeardown = opts?.backendOwnsPtyTeardown === true

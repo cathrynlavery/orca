@@ -608,4 +608,14 @@ describe('per-tab sleep fences of a twin', () => {
     expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
   })
+
+  it("a batch's last copy still stops an unclaimed pane on a server outside the twin", async () => {
+    const f = twin()
+    addTab(f, 'tab-env-c', toRemoteRuntimePtyId('handle-c', 'env-c'))
+
+    await sleepWorktreesReportingFailures(both(f))
+
+    const sleeps = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.sleep')
+    expect(sleeps).toHaveLength(1)
+  })
 })
