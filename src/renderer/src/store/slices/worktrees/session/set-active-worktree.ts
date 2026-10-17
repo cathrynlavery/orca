@@ -17,7 +17,12 @@ import {
 } from '../../../../../../shared/workspace-scope'
 import { findKnownWorktreeById } from '../listing/detected-worktree-meta'
 import { resolveActivatedWorktreeSurface } from './active-worktree-surface'
-import { clearTabSleepIntent, clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import {
+  clearTabSleepIntent,
+  clearWorktreeSleepIntent,
+  hasWorktreeSleepIntent,
+  markTabSleepIntent
+} from '@/lib/worktree-sleep-intent'
 import { hostWorktreeTarget } from '../../../../../../shared/worktree/host-qualified-identity'
 import { resolveHostTwinTerminalScope } from '../../../terminals/host-twin-terminal-scope'
 import {
@@ -168,20 +173,27 @@ export function createSetActiveWorktree(
     // Why: any activation is an explicit wake (null is the sleep flow clearing selection).
     // Cleared after the set() above so a pane still waiting on the marker connects once,
     // in the remounted generation, instead of connecting and then being remounted.
-    clearWorktreeSleepIntent(worktreeId)
-    if (worktreeId) {
-      // Why: activating one host's copy of a twin wakes only that copy's fenced tabs.
-      const twinScope = executionHostId
+    // Why: opening one host's copy of a twin wakes only that copy; the others stay asleep.
+    const twinScope =
+      worktreeId && executionHostId
         ? resolveHostTwinTerminalScope(
             get(),
             hostWorktreeTarget({ id: worktreeId, hostId: executionHostId })
           )
         : null
-      clearTabSleepIntent(
-        worktreeId,
-        twinScope?.tabIds ?? (get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
-      )
+    const worktreeTabIds = worktreeId
+      ? (get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
+      : []
+    if (twinScope && hasWorktreeSleepIntent(worktreeId)) {
+      // Why: the shared marker fenced every copy, so the copies not opened keep a per-tab fence.
+      markTabSleepIntent(worktreeTabIds.filter((tabId) => !twinScope.tabIds.has(tabId)))
     }
+    clearWorktreeSleepIntent(worktreeId)
+    if (worktreeId) {
+      clearTabSleepIntent(worktreeId, twinScope?.tabIds ?? worktreeTabIds)
+    }
+    const inWokenCopy = (tab: { id: string }): boolean =>
+      isWakeable(tab) && (!twinScope || twinScope.tabIds.has(tab.id))
 
     if (worktreeId && shouldPrepareTerminalTabs) {
       const prepareTerminalTabs = (): void => {
@@ -191,7 +203,7 @@ export function createSetActiveWorktree(
             return s
           }
           const tabs = s.tabsByWorktree[worktreeId] ?? []
-          const wakeable = tabs.filter(isWakeable)
+          const wakeable = tabs.filter(inWokenCopy)
           if (wakeable.length === 0) {
             return s
           }
@@ -200,7 +212,7 @@ export function createSetActiveWorktree(
             return s
           }
           return markWorktreeTabsForActivationSpawn(s, worktreeId, {
-            isWakeable,
+            isWakeable: inWokenCopy,
             bumpGeneration: allDead
           })
         })

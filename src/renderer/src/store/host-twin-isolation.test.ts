@@ -205,25 +205,12 @@ const TWIN_KINDS: readonly HostTwinKind[] = [
   'folder group local+ssh'
 ]
 
-function everyCell(actionId: string, reason: string, kinds = TWIN_KINDS): [string, string][] {
-  return kinds.flatMap((kind) =>
-    (['remote', 'local'] as const).map((target): [string, string] => [
-      `${actionId} | ${kind} | ${target}`,
-      reason
-    ])
-  )
-}
-
 /** `<action> | <kind> | <target>` → why the survivor is touched today (tracker Stage 1 worklist). */
 const KNOWN_TWIN_LEAKS: Readonly<Record<string, string>> = Object.fromEntries([
   [
     'remove project | local+runtime | local',
     'a sleeping-agent record with no host evidence is dropped instead of kept for the survivor'
-  ],
-  ...everyCell(
-    'select',
-    'activating a slept twin clears the shared raw-id sleep marker and re-arms both twins’ tabs'
-  )
+  ]
 ])
 
 function cellId(action: TwinAction, kind: HostTwinKind, target: 'local' | 'remote'): string {

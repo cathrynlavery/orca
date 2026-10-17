@@ -97,3 +97,44 @@ export function resolveHostTwinTeardownOwner(
 export function worktreeIdOfTarget(target: string | HostWorktreeTarget): string {
   return typeof target === 'string' ? target : target.worktreeId
 }
+
+/**
+ * A batch that names every host publishing an id leaves no copy awake, so those targets become
+ * one raw id and the whole worktree, shared state included, is acted on as before.
+ */
+export function collapseFullyTargetedTwins(
+  state: AppState,
+  targets: readonly (string | HostWorktreeTarget)[]
+): (string | HostWorktreeTarget)[] {
+  const hostTargetsById = new Map<string, HostWorktreeTarget[]>()
+  for (const target of targets) {
+    if (typeof target !== 'string') {
+      hostTargetsById.set(target.worktreeId, [
+        ...(hostTargetsById.get(target.worktreeId) ?? []),
+        target
+      ])
+    }
+  }
+  const collapsedIds = new Set(
+    [...hostTargetsById]
+      .filter(
+        ([, group]) =>
+          group.length > 1 &&
+          collectHostTwinPurgeScopes(state, group.map(normalizeWorktreePurgeTarget)).byHost.size ===
+            0
+      )
+      .map(([id]) => id)
+  )
+  const emitted = new Set<string>()
+  return targets.flatMap((target) => {
+    const id = worktreeIdOfTarget(target)
+    if (!collapsedIds.has(id)) {
+      return [target]
+    }
+    if (emitted.has(id)) {
+      return []
+    }
+    emitted.add(id)
+    return [id]
+  })
+}

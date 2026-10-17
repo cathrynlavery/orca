@@ -5,7 +5,11 @@ import {
   readNativeChatComposerDraft,
   updateNativeChatComposerDraft
 } from '@/components/native-chat/native-chat-composer-draft-store'
-import { forgetWorktreeSleepIntent, hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import {
+  clearTabSleepIntent,
+  forgetWorktreeSleepIntent,
+  hasPaneSleepIntent
+} from '@/lib/worktree-sleep-intent'
 import {
   clearHugeRepoWarningDismissalsForTests,
   hasDismissedHugeRepoWarning
@@ -14,6 +18,10 @@ import type { HostTwinFixture, HostTwinSide } from './host-twin.test-fixture'
 
 export function resetHostTwinModuleStores(fixture: HostTwinFixture): void {
   forgetWorktreeSleepIntent(fixture.workspaceKey)
+  clearTabSleepIntent(fixture.workspaceKey, [
+    fixture.local.terminalTabId,
+    fixture.remote.terminalTabId
+  ])
   clearHugeRepoWarningDismissalsForTests()
   for (const s of [fixture.local, fixture.remote]) {
     updateNativeChatComposerDraft(s.paneKey, { text: '' }, 'deferred')
@@ -69,8 +77,9 @@ const HOST_TWIN_MODULE_STORES: readonly {
   read: (fixture: HostTwinFixture, owner: HostTwinSide) => unknown
 }[] = [
   {
+    // Why per copy: one host's copy can sleep while its twin is awake, fenced by tab.
     name: 'worktree-sleep-intent',
-    read: (fixture) => hasWorktreeSleepIntent(fixture.workspaceKey)
+    read: (fixture, owner) => hasPaneSleepIntent(fixture.workspaceKey, owner.terminalTabId)
   },
   {
     name: 'huge-repo-warning-dismissal',

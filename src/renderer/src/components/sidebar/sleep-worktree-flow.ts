@@ -11,6 +11,7 @@ import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedSc
 import { translate } from '@/i18n/i18n'
 import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
 import {
+  collapseFullyTargetedTwins,
   resolveHostTwinTerminalScope,
   worktreeIdOfTarget
 } from '@/store/terminals/host-twin-terminal-scope'
@@ -170,9 +171,9 @@ export type WorktreeSleepOutcome = { failedWorktreeIds: string[]; errors: string
 
 /** The sleep without the toast, for callers that report failures themselves. */
 export async function sleepWorktreesReportingFailures(
-  targets: readonly SleepWorktreeTarget[]
+  requestedTargets: readonly SleepWorktreeTarget[]
 ): Promise<WorktreeSleepOutcome> {
-  if (targets.length === 0) {
+  if (requestedTargets.length === 0) {
     return { failedWorktreeIds: [], errors: [] }
   }
   const {
@@ -182,6 +183,7 @@ export async function sleepWorktreesReportingFailures(
     shutdownWorktreeBrowsers,
     shutdownWorktreeTerminals
   } = useAppStore.getState()
+  const targets = collapseFullyTargetedTwins(useAppStore.getState(), requestedTargets)
   // Why: the sleep-intent marker, browsers and VM suspension are keyed by the raw id, so while
   // another host's copy stays awake they belong to it too. Only that host's terminals sleep, and
   // they are fenced per tab: the shared marker would hold the awake copy's pane connects, and

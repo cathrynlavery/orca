@@ -205,4 +205,30 @@ describe('kill and sleep on one host of a twin', () => {
     ).rejects.toThrow('ambiguous_terminal_owner')
     expect(ptyKill).not.toHaveBeenCalled()
   })
+
+  it('sleeps the whole worktree once when the batch names every copy', async () => {
+    const f = twin()
+
+    await sleepWorktreesReportingFailures([
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.local }),
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })
+    ])
+
+    expect(killedPtyIds().sort()).toEqual([f.local.ptyId, f.remote.ptyId].sort())
+    expect(shutdownBrowsers).toHaveBeenCalledTimes(1)
+  })
+
+  it("remounts only the woken copy's terminals", async () => {
+    const f = twin()
+    clearWorktreeSleepIntent(f.workspaceKey)
+    await sleepWorktreesReportingFailures([hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })])
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+
+    const generation = (tabId: string) =>
+      f.store.getState().tabsByWorktree[f.workspaceKey]?.find((tab) => tab.id === tabId)
+        ?.generation ?? 0
+    await vi.waitFor(() => expect(generation(f.remote.terminalTabId)).toBe(1))
+    expect(generation(f.local.terminalTabId)).toBe(0)
+  })
 })
