@@ -47,16 +47,30 @@ export function collectRemovedHostTwins(
 export function closeRemovedHostTwinState(
   get: () => AppState,
   set: (patch: (state: AppState) => Partial<AppState>) => void,
-  twins: RemovedHostTwins
+  twins: RemovedHostTwins,
+  preCall: RemovedHostTwins
 ): void {
+  const state = get()
+  const presentTabIds = new Set([
+    ...Object.values(state.tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id)),
+    ...Object.values(state.unifiedTabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.entityId))
+  ])
   for (const { hostId, removed } of twins.byHost) {
+    // Why: a host frame during the call can drop a tab without closeTab's agent and cache cleanup.
+    const terminalTabIds = new Set([
+      ...removed.terminalTabIds,
+      ...preCall.byHost
+        .filter((entry) => entry.hostId === hostId)
+        .flatMap((entry) => [...entry.removed.terminalTabIds])
+        .filter((tabId) => !presentTabIds.has(tabId))
+    ])
     // Why: a runtime host stopped its own shells on removal, so no close is sent back to it.
     const remoteCloseOwnedByHost = parseExecutionHostId(hostId)?.kind === 'runtime'
     // Why planned together: the planner keeps a PTY another surviving tab still binds.
-    const plans = buildTerminalTabRetirementPlans(get(), [...removed.terminalTabIds])
+    const plans = buildTerminalTabRetirementPlans(get(), [...terminalTabIds])
     // Why live-indexed only: a parked layout hint may be another host's session id.
     const liveInBatch = new Set(
-      [...removed.terminalTabIds].flatMap((tabId) => get().ptyIdsByTabId[tabId] ?? [])
+      [...terminalTabIds].flatMap((tabId) => get().ptyIdsByTabId[tabId] ?? [])
     )
     const killedPtyIds = new Set<string>()
     const retiredPtyIds = new Set<string>()

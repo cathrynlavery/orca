@@ -573,6 +573,43 @@ describe('removing a remote project keeps its local twin', () => {
     expect(ptyKill).not.toHaveBeenCalledWith(remotePtyId)
   })
 
+  it('still retires a removed-host tab a host frame dropped during the call', async () => {
+    const store = seedTwins()
+    const agentStatus = (paneKey: string) => ({
+      state: 'working' as const,
+      prompt: '',
+      updatedAt: 1,
+      stateStartedAt: 1,
+      paneKey,
+      stateHistory: [],
+      agentType: 'claude' as const
+    })
+    store.setState({
+      agentStatusByPaneKey: {
+        'tab-local:leaf': agentStatus('tab-local:leaf'),
+        'tab-remote:leaf': agentStatus('tab-remote:leaf')
+      }
+    })
+    // Like a snapshot reducer: the tab goes, its agent rows stay.
+    onRepoRemoved = () =>
+      store.setState((s) => ({
+        tabsByWorktree: {
+          [WORKTREE_ID]: (s.tabsByWorktree[WORKTREE_ID] ?? []).filter(
+            (tab) => tab.id !== 'tab-remote'
+          )
+        },
+        unifiedTabsByWorktree: {
+          [WORKTREE_ID]: (s.unifiedTabsByWorktree[WORKTREE_ID] ?? []).filter(
+            (tab) => tab.id !== 'tab-remote'
+          )
+        }
+      }))
+
+    await store.getState().removeProject(PROJECT_ID, { hostId: REMOTE_HOST })
+
+    expect(Object.keys(store.getState().agentStatusByPaneKey)).toEqual(['tab-local:leaf'])
+  })
+
   it('leaves the selection unchanged on a single-host removal', async () => {
     const store = createTestStore()
     const otherKey = worktreeWorkspaceKey('other-repo::/work/other')
