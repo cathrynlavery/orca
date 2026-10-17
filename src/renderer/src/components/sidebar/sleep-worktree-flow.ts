@@ -3,6 +3,7 @@ import { useAppStore } from '@/store'
 import {
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
+  hasPaneSleepIntent,
   markTabSleepIntent,
   markWorktreeSleepIntent,
   withTabSleepTeardown,
@@ -238,6 +239,7 @@ export async function sleepWorktreesReportingFailures(
   const errors: string[] = []
   const failedWorktreeIds = new Set<string>()
   const failedTargets = new Set<SleepWorktreeTarget>()
+  const newlyFencedTabIds = new Map<SleepWorktreeTarget, string[]>()
   try {
     for (const [index, target] of targets.entries()) {
       const worktreeId = worktreeIdOfTarget(target)
@@ -252,6 +254,11 @@ export async function sleepWorktreesReportingFailures(
       const ownsSharedState = !twin && !sharedStateHandled.has(worktreeId)
       sharedStateHandled.add(worktreeId)
       if (twin) {
+        // Why only new ones: a failed repeat sleep must not wake a copy that is already asleep.
+        newlyFencedTabIds.set(
+          target,
+          [...twinTabs].filter((tabId) => !hasPaneSleepIntent(worktreeId, tabId))
+        )
         markTabSleepIntent(twinTabs)
       } else {
         markWorktreeSleepIntent(worktreeId)
@@ -317,9 +324,8 @@ export async function sleepWorktreesReportingFailures(
     // Why: a failed sleep leaves the workspace awake and retryable.
     for (const target of failedTargets) {
       const worktreeId = worktreeIdOfTarget(target)
-      const tabIds = twinTabIds.get(target)
-      if (tabIds) {
-        clearTabSleepIntent(worktreeId, tabIds)
+      if (twinTabIds.has(target)) {
+        clearTabSleepIntent(worktreeId, newlyFencedTabIds.get(target) ?? [])
         continue
       }
       if (fullyTargetedIds.has(worktreeId)) {

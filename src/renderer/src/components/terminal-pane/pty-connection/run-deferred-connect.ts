@@ -7,7 +7,7 @@ import { createCodexBackfillErrorDetector } from '../codex-backfill-error-detect
 import { hasPaneSleepIntent, onPaneSleepIntentCleared } from '@/lib/worktree-sleep-intent'
 
 import { recordPtyConnectDiagnostic } from './pty-connect-limits'
-import { findTerminalTabForPane, resolveTerminalTabId } from './terminal-tab-id'
+import { findTerminalTabForPane } from './terminal-tab-id'
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 import { bindBuildColdRestoreAgentResumeStartup } from './cold-restore-resume-startup'
@@ -39,7 +39,9 @@ export function installRunDeferredConnect(session: ConnectPanePtySession): void 
     // would reattach the retained session id and respawn the shell (#10205).
     // Wait for the wake instead; a queued startup is an explicit launch.
     // Why the terminal id: a twin's per-tab fence is keyed by it, not by a unified-tab id.
-    const fenceTabId = resolveTerminalTabId(useAppStore.getState(), session.deps.tabId)
+    const fenceTabId =
+      findTerminalTabForPane(useAppStore.getState(), session.deps.worktreeId, session.deps.tabId)
+        ?.id ?? session.deps.tabId
     if (hasPaneSleepIntent(session.deps.worktreeId, fenceTabId) && !session.paneStartup) {
       session.cancelScheduledConnectFrame()
       if (session.connectFallbackTimer !== null) {
