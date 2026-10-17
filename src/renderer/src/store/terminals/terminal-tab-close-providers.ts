@@ -4,7 +4,7 @@ import {
 } from '@/runtime/runtime-environment-revision'
 import type { AppState } from '../types'
 import { callRuntimeRpc, ensureRuntimeEnvironmentCompatible } from '@/runtime/runtime-rpc-client'
-import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
+import { resolveTerminalHostOwnership } from '@/lib/terminal-worktree-route'
 import {
   classifyTerminalRetirementWorktree,
   type TerminalTabRetirementPlan
@@ -25,9 +25,15 @@ export function startTerminalTabProviderRetirement({
   tabId: string
   canRetireRuntimeTerminal?: () => boolean
 }): void {
-  const fallbackWorktreeRoute = retirementPlan.worktreeId
-    ? resolveTerminalWorktreeRoute(state, retirementPlan.worktreeId)
-    : { runtimeEnvironmentId: null }
+  // Why teardown: a legacy remote id names no runtime, and a focused-server guess could close
+  // another host's terminal; an unresolved owner skips the close instead.
+  const fallbackOwnership = retirementPlan.worktreeId
+    ? resolveTerminalHostOwnership(state, retirementPlan.worktreeId, 'teardown')
+    : null
+  const fallbackWorktreeRoute =
+    fallbackOwnership?.kind === 'unresolved'
+      ? null
+      : { runtimeEnvironmentId: fallbackOwnership?.runtimeEnvironmentId ?? null }
   const retirementTasks: Promise<unknown>[] = localPtyTeardownOwnedExternally
     ? []
     : retirementPlan.localOrSshPtyIds.map(async (ptyId) => window.api.pty.kill(ptyId))
