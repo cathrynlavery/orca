@@ -21,7 +21,8 @@ import {
   clearCopySleepIntent,
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
-  getCopyFencedTabIds
+  getCopyFencedTabIds,
+  isTabFencedForOtherCopy
 } from '@/lib/worktree-sleep-intent'
 import { hostWorktreeTarget } from '../../../../../../shared/worktree/host-qualified-identity'
 import {
@@ -68,8 +69,10 @@ export function createSetActiveWorktree(
     const wokenTabIds = twinScope
       ? new Set([
           ...twinScope.tabIds,
-          // Unclaimed tabs wake with the opened copy, as their fences do below.
-          ...twinScope.unattributedTabIds,
+          // Unclaimed tabs wake with the opened copy, unless another copy recorded them asleep.
+          ...[...twinScope.unattributedTabIds].filter(
+            (tabId) => !isTabFencedForOtherCopy(worktreeId ?? '', tabId, twinScope.copyHostId)
+          ),
           ...getCopyFencedTabIds(worktreeId ?? '', twinScope.copyHostId)
         ])
       : null

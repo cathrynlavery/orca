@@ -295,7 +295,23 @@ export async function sleepWorktreesReportingFailures(
           : withWorktreeSleepTeardown(worktreeId, teardown))
         // Why: a workspace the user activated during the batch is awake by their choice.
         const now = useAppStore.getState()
-        if (
+        const selectedSibling = plan.everyCopy
+          ? plans.find(
+              (other) =>
+                other !== plan &&
+                other.worktreeId === worktreeId &&
+                planIsSelectedCopy(
+                  now,
+                  other,
+                  now.activeWorktreeId,
+                  now.activeWorkspaceExecutionHostId
+                )
+            )
+          : undefined
+        if (selectedSibling && now.activeWorkspaceExecutionHostId) {
+          // Why replay: the shared teardown guard blocked that copy's wake while this one stopped.
+          now.setActiveWorktree(worktreeId, now.activeWorkspaceExecutionHostId)
+        } else if (
           planIsSelectedCopy(now, plan, now.activeWorktreeId, now.activeWorkspaceExecutionHostId)
         ) {
           if (newlyFencedByPlan.has(plan)) {

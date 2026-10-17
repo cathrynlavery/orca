@@ -321,4 +321,43 @@ describe('per-tab sleep fences of a twin', () => {
 
     expect(generation()).toBe(before + 1)
   })
+
+  it("opening the other copy keeps a slept copy's unclaimed split tab fenced", async () => {
+    const f = twin('local+runtime')
+    const tabId = f.local.terminalTabId
+    f.store.setState((s) => ({
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [tabId]: [f.local.ptyId, 'pty-local-2'] },
+      terminalLayoutsByTabId: {
+        ...s.terminalLayoutsByTabId,
+        [tabId]: {
+          ...s.terminalLayoutsByTabId[tabId],
+          ptyIdsByLeafId: { 'leaf-1': f.local.ptyId, 'leaf-2': 'pty-local-2' }
+        }
+      },
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+          tab.id === tabId ? { ...tab, executionHostId: undefined } : tab
+        )
+      }
+    }))
+    await sleepWorktreesReportingFailures([hostWorktreeTarget({ id: f.workspaceKey, ...f.local })])
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+
+    expect(hasPaneSleepIntent(f.workspaceKey, tabId)).toBe(true)
+  })
+
+  it('a copy opened while an every-copy batch stops the other ends up awake', async () => {
+    const f = twin()
+    ptyKill.mockImplementation((ptyId: string) => {
+      if (ptyId === f.remote.ptyId) {
+        f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+      }
+    })
+
+    await sleepWorktreesReportingFailures(both(f))
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+  })
 })

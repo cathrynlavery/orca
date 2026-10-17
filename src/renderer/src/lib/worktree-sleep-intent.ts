@@ -100,6 +100,18 @@ export function getCopyFencedTabIds(worktreeId: string, copyHostId: string): str
   return [...(fencedTabIdsByCopy.get(copyKey(worktreeId, copyHostId)) ?? [])]
 }
 
+export function isTabFencedForOtherCopy(
+  worktreeId: string,
+  tabId: string,
+  copyHostId: string
+): boolean {
+  const suffix = `\u0000${worktreeId}`
+  return [...fencedTabIdsByCopy].some(
+    ([key, fenced]) =>
+      key.endsWith(suffix) && key !== copyKey(worktreeId, copyHostId) && fenced.has(tabId)
+  )
+}
+
 /** Wakes every tab fenced for this copy of a twin. */
 export function clearCopySleepIntent(worktreeId: string, copyHostId: string): void {
   clearTabSleepIntent(worktreeId, [
