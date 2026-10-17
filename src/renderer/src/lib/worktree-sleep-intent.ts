@@ -170,6 +170,11 @@ export function clearTabSleepIntent(worktreeId: string, tabIds: Iterable<string>
   }
 }
 
+/** The per-tab fence alone, without the worktree's shared marker. */
+export function hasTabSleepFence(tabId: string): boolean {
+  return sleepingTabIds.has(tabId)
+}
+
 export function hasPaneSleepIntent(worktreeId: string, tabId: string): boolean {
   return sleepingWorktreeIds.has(worktreeId) || sleepingTabIds.has(tabId)
 }

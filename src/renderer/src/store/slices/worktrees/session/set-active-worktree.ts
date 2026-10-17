@@ -68,6 +68,8 @@ export function createSetActiveWorktree(
     const wokenTabIds = twinScope
       ? new Set([
           ...twinScope.tabIds,
+          // Unclaimed tabs wake with the opened copy, as their fences do below.
+          ...twinScope.unattributedTabIds,
           ...getCopyFencedTabIds(worktreeId ?? '', twinScope.copyHostId)
         ])
       : null

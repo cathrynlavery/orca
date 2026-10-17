@@ -3,7 +3,7 @@ import { useAppStore } from '@/store'
 import {
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
-  hasPaneSleepIntent,
+  hasTabSleepFence,
   markCopySleepIntent,
   markWorktreeSleepIntent,
   withTabSleepTeardown,
@@ -192,9 +192,7 @@ export async function sleepWorktreesReportingFailures(
     if (!scope) {
       return []
     }
-    const newlyFenced = [...scope.tabIds].filter(
-      (tabId) => !hasPaneSleepIntent(plan.worktreeId, tabId)
-    )
+    const newlyFenced = [...scope.tabIds].filter((tabId) => !hasTabSleepFence(tabId))
     markCopySleepIntent(plan.worktreeId, scope.copyHostId, scope.tabIds)
     return newlyFenced
   }

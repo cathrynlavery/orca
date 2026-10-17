@@ -293,4 +293,32 @@ describe('per-tab sleep fences of a twin', () => {
       f.store.getState().acknowledgedAgentsByPaneKey['tab-unified-only:leaf-1']
     ).toBeUndefined()
   })
+
+  it('a later copy that fails to stop in an every-copy batch is left unfenced', async () => {
+    const f = twin()
+    ptyKill.mockImplementation((ptyId: string) => {
+      if (ptyId === f.remote.ptyId) {
+        throw new Error('terminal_kill_failed')
+      }
+    })
+
+    await sleepWorktreesReportingFailures(both(f))
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(true)
+  })
+
+  it('opening a copy after an every-copy sleep remounts a tab neither copy claims', async () => {
+    const f = twin()
+    addTab(f, 'tab-unclaimed', 'pty-x')
+    await sleepWorktreesReportingFailures(both(f))
+    const generation = () =>
+      f.store.getState().tabsByWorktree[f.workspaceKey]?.find((tab) => tab.id === 'tab-unclaimed')
+        ?.generation ?? 0
+    const before = generation()
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+
+    expect(generation()).toBe(before + 1)
+  })
 })
