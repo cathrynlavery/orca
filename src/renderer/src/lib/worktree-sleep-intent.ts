@@ -79,13 +79,33 @@ export function markTabSleepIntent(tabIds: Iterable<string>): void {
   }
 }
 
-/** Wakes fenced tabs; a bind during the worktree's sleep teardown is not a wake. */
+const tearingDownTabIds = new Set<string>()
+
+/** The per-tab form of `withWorktreeSleepTeardown`, for one copy of a twin. */
+export async function withTabSleepTeardown<T>(
+  tabIds: Iterable<string>,
+  teardown: () => Promise<T>
+): Promise<T> {
+  const ids = [...tabIds]
+  for (const tabId of ids) {
+    tearingDownTabIds.add(tabId)
+  }
+  try {
+    return await teardown()
+  } finally {
+    for (const tabId of ids) {
+      tearingDownTabIds.delete(tabId)
+    }
+  }
+}
+
+/** Wakes fenced tabs; a bind during their own sleep teardown is not a wake. */
 export function clearTabSleepIntent(worktreeId: string, tabIds: Iterable<string>): void {
   if (tearingDownWorktreeIds.has(worktreeId)) {
     return
   }
   for (const tabId of tabIds) {
-    if (!sleepingTabIds.delete(tabId)) {
+    if (tearingDownTabIds.has(tabId) || !sleepingTabIds.delete(tabId)) {
       continue
     }
     const listeners = wakeListenersByTabId.get(tabId)
