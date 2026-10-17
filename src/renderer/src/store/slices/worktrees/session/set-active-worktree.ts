@@ -191,7 +191,8 @@ export function createSetActiveWorktree(
       : []
     if (twinScope && hasWorktreeSleepIntent(worktreeId)) {
       // Why: the shared marker fenced every copy, so the copies not opened keep a per-tab fence.
-      markTabSleepIntent(worktreeTabIds.filter((tabId) => !twinScope.tabIds.has(tabId)))
+      // Tabs no host claims wake with the opened copy, so none is fenced with no way back.
+      markTabSleepIntent(twinScope.otherCopyTabIds)
     }
     clearWorktreeSleepIntent(worktreeId)
     if (worktreeId) {

@@ -6,11 +6,6 @@ import { startTerminalTabProviderRetirement } from './terminal-tab-close-provide
 
 const callRuntimeRpc = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 
-// Why: stands in for exactly one focused server, the guess teardown must not act on.
-vi.mock('@/lib/single-runtime-legacy-owner', () => ({
-  getSingleFocusedRuntimeEnvironmentId: () => 'env-focused'
-}))
-
 vi.mock('@/runtime/runtime-rpc-client', () => ({
   callRuntimeRpc,
   ensureRuntimeEnvironmentCompatible: vi.fn().mockResolvedValue(undefined)
@@ -26,11 +21,18 @@ afterEach(() => {
 })
 
 describe('provider retirement of a legacy runtime terminal', () => {
-  it('does not send an unowned close to the focused server', () => {
+  it('skips the close when two hosts publish the workspace', () => {
     const store = createTestStore()
     const workspaceKey = folderWorkspaceKey('folder-1')
     store.setState(() => ({
-      folderWorkspaces: [makeFolderWorkspace({ id: 'folder-1', folderPath: '/work/f' })]
+      folderWorkspaces: [
+        makeFolderWorkspace({ id: 'folder-1', folderPath: '/work/f', executionHostId: 'local' }),
+        makeFolderWorkspace({
+          id: 'folder-1',
+          folderPath: '/work/f',
+          executionHostId: 'runtime:env-b'
+        })
+      ]
     }))
 
     startTerminalTabProviderRetirement({
@@ -50,10 +52,7 @@ describe('provider retirement of a legacy runtime terminal', () => {
       tabId: 'tab-1'
     })
 
-    expect(callRuntimeRpc).not.toHaveBeenCalledWith(
-      { kind: 'environment', environmentId: 'env-focused' },
-      expect.anything(),
-      expect.anything()
-    )
+    // The legacy id names neither copy's server, so neither is asked to close it.
+    expect(callRuntimeRpc).not.toHaveBeenCalled()
   })
 })

@@ -4,7 +4,7 @@ import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualif
 import { normalizeWorktreePurgeTarget } from '../slices/worktree-purge-target'
 import { collectHostTwinPurgeScopes } from '../slices/worktrees/teardown/host-twin-worktree-purge'
 import { collectRemovedHostTwinState } from '../repos/repo-removal-host-twin-attribution'
-import { findKnownWorktreeById } from '../slices/worktrees/listing/detected-worktree-meta'
+import { runtimeEnvironmentIdForWorkspaceOwner } from '@/lib/resolve-owner'
 import { collectPtyIdsForTab } from '../slices/terminal-tab-retirement'
 import { isRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
 import { resolveTerminalTeardownOwner, type TerminalTeardownOwner } from './terminal-teardown-owner'
@@ -20,6 +20,10 @@ export type HostTwinTerminalScope = {
   runtimeEnvironmentId: string | null
   /** Target-host panes inside tabs another host's pane shares; their teardown is refused. */
   mixedTabPtyIds: ReadonlySet<string>
+  /** The target's own row resolves to more than one server, so nothing can be routed. */
+  ownerAmbiguous: boolean
+  /** Tabs attributed to the hosts that still publish the id. */
+  otherCopyTabIds: ReadonlySet<string>
   /** Tabs with PTY evidence no host can be shown to own; their teardown is refused too. */
   unattributedLiveTabIds: ReadonlySet<string>
   /** Whether the target's tabs still name a PTY (layout, reconnect or relay hint). */
@@ -67,7 +71,11 @@ export function resolveHostTwinTerminalScope(
     twinHostIds
   )
   const requested = parseExecutionHostId(target.hostId)
-  const row = findKnownWorktreeById(state, target.worktreeId, target.hostId)
+  // Why the owner resolver: a paired runtime's SSH copy may record its transport on any of its rows.
+  const owner = runtimeEnvironmentIdForWorkspaceOwner(state, {
+    workspaceId: target.worktreeId,
+    hostId: target.hostId
+  })
   const survivors = twinHostIds.get(target.worktreeId) ?? []
   const survivorTabIds = new Set(
     survivors.flatMap((survivor) => [
@@ -97,7 +105,11 @@ export function resolveHostTwinTerminalScope(
     runtimeEnvironmentId:
       requested?.kind === 'runtime'
         ? requested.environmentId
-        : (row?.runtimeOwnerEnvironmentId?.trim() ?? null) || null,
+        : owner.kind === 'resolved'
+          ? owner.environmentId
+          : null,
+    ownerAmbiguous: requested?.kind !== 'runtime' && owner.kind === 'ambiguous',
+    otherCopyTabIds: survivorTabIds,
     mixedTabPtyIds,
     unattributedLiveTabIds,
     hasPtyEvidence: (state.tabsByWorktree[target.worktreeId] ?? []).some(
@@ -118,7 +130,9 @@ export function resolveHostTwinTeardownOwner(
 ): TerminalTeardownOwner {
   // Why: a split tab shared with the twin can't lose only some panes here, so nothing is stopped.
   if (
-    (scope.mixedTabPtyIds.size > 0 || scope.unattributedLiveTabIds.size > 0) &&
+    (scope.ownerAmbiguous ||
+      scope.mixedTabPtyIds.size > 0 ||
+      scope.unattributedLiveTabIds.size > 0) &&
     !backendOwnsPtyTeardown
   ) {
     return { kind: 'refused', reason: 'ambiguous_terminal_owner' }

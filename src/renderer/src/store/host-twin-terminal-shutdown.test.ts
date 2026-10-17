@@ -295,4 +295,15 @@ describe('kill and sleep on one host of a twin', () => {
         .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }))
     ).rejects.toThrow('ambiguous_terminal_owner')
   })
+
+  it('opening one copy under a shared marker keeps only the other copy fenced', () => {
+    const f = twin()
+
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+    // No host claims the dormant tab, so it wakes rather than waiting on a wake that never comes.
+    expect(hasPaneSleepIntent(f.workspaceKey, f.dormantTabId)).toBe(false)
+  })
 })
