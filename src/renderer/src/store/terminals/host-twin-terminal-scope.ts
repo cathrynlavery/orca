@@ -20,7 +20,7 @@ export type HostTwinTerminalScope = {
   runtimeEnvironmentId: string | null
   /** Target-host panes inside tabs another host's pane shares; their teardown is refused. */
   mixedTabPtyIds: ReadonlySet<string>
-  /** Live tabs no host can be shown to own; their teardown is refused too. */
+  /** Tabs with PTY evidence no host can be shown to own; their teardown is refused too. */
   unattributedLiveTabIds: ReadonlySet<string>
   /** Whether the target's tabs still name a PTY (layout, reconnect or relay hint). */
   hasPtyEvidence: boolean
@@ -79,12 +79,12 @@ export function resolveHostTwinTerminalScope(
       ).terminalTabIds
     ])
   )
-  // Why: a live tab no host can claim may be the target's, so stopping the rest is not a sleep.
+  // Why: a tab no host can claim may run the target's shell, so stopping the rest is not a sleep.
   const unattributedLiveTabIds = new Set(
     (state.tabsByWorktree[target.worktreeId] ?? [])
       .filter(
         (tab) =>
-          (state.ptyIdsByTabId[tab.id]?.length ?? 0) > 0 &&
+          collectPtyIdsForTab(state, tab.id, tab.ptyId).length > 0 &&
           !terminalTabIds.has(tab.id) &&
           !survivorTabIds.has(tab.id)
       )
