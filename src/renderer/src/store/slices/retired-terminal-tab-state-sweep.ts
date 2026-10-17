@@ -1,6 +1,7 @@
 import { removePaneKeys } from './agent-status-pane-keyed-records'
 import type { AppState } from '../types'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
+import { forgetTabSleepIntent } from '@/lib/worktree-sleep-intent'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
 // Why: the store-free registry (not terminal-parked-tab-watchers, which imports @/store) so a slice can import this module during its own evaluation.
@@ -48,6 +49,8 @@ export function sweepRetiredTerminalTabState(
   // Why: retirement permanently retires the tab's panes (a reopen mints a fresh leafId), so drop hibernation output epochs to keep the module map from growing forever.
   forgetAgentHibernationTabOutput(tabId)
   forgetNativeChatPromptDismissalsForTab(tabId)
+  // Why: a retired tab never wakes, so its twin sleep fence must not outlive it.
+  forgetTabSleepIntent([tabId])
   // Why: same rationale — retired tab ids never recur, so drop the foreground last-seen and consumed agent-startup delivery guards.
   forgetForegroundTerminalTabs([tabId])
   forgetAgentStartupDeliveriesForTabs([tabId])

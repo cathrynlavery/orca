@@ -360,4 +360,13 @@ describe('per-tab sleep fences of a twin', () => {
     expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
   })
+
+  it('closing a fenced tab forgets its fence', () => {
+    const f = twin()
+    markCopySleepIntent(f.workspaceKey, f.remote.hostId, [f.remote.terminalTabId])
+
+    f.store.getState().closeTab(f.remote.terminalTabId, { reason: 'cleanup' })
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
+  })
 })
