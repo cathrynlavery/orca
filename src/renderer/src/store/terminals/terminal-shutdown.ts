@@ -12,6 +12,7 @@ import { equalStringSets, sortedUniquePtyIds } from './terminal-pty-identities'
 import { resolveRuntimeOwnerForWorktree } from '@/lib/worktree-runtime-owner'
 import { resolveTerminalTeardownOwner } from './terminal-teardown-owner'
 import {
+  paneKeysForTabs,
   resolveHostTwinTeardownOwner,
   resolveHostTwinTerminalScope,
   worktreeIdOfTarget
@@ -40,11 +41,18 @@ export function createTerminalShutdownActions(
         opts?.shutdownReason ?? (keepIdentifiers ? 'manual-sleep' : 'remove-worktree')
       // Why: with a twin on another host, only the target host's tabs and panes are stopped.
       const twinScope = resolveHostTwinTerminalScope(get(), target)
+      const unattributedTabs = opts?.unattributedTabs ?? 'refuse'
+      const scopedTabIds = twinScope
+        ? new Set([
+            ...twinScope.tabIds,
+            ...(unattributedTabs === 'stop' ? twinScope.unattributedTabIds : [])
+          ])
+        : null
       const tabs = (get().tabsByWorktree[worktreeId] ?? []).filter(
-        (tab) => !twinScope || twinScope.tabIds.has(tab.id)
+        (tab) => !scopedTabIds || scopedTabIds.has(tab.id)
       )
-      const sleepingPaneKeys = twinScope
-        ? twinScope.paneKeys.filter(
+      const sleepingPaneKeys = scopedTabIds
+        ? paneKeysForTabs(get(), scopedTabIds).filter(
             (key) => !opts?.sleepingPaneKeys || opts.sleepingPaneKeys.includes(key)
           )
         : opts?.sleepingPaneKeys
@@ -54,7 +62,10 @@ export function createTerminalShutdownActions(
       const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
       const backendOwnsPtyTeardown = opts?.backendOwnsPtyTeardown === true
       const teardownOwner = twinScope
-        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds, backendOwnsPtyTeardown)
+        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds, {
+            backendOwnsPtyTeardown,
+            unattributedTabs
+          })
         : resolveTerminalTeardownOwner(
             resolveRuntimeOwnerForWorktree(get(), worktreeId),
             rendererShutdownPtyIds
@@ -115,6 +126,7 @@ export function createTerminalShutdownActions(
         guards.unregisterHandlers()
         try {
           // Backend ownership is opt-in; the default owner RPC prevents remote PTY leaks.
+          // Why whole-worktree even for one copy: a runtime never publishes two copies of one id.
           if (runtimeEnvironmentId && !backendOwnsPtyTeardown) {
             await (shutdownReason === 'manual-sleep'
               ? requestRemoteWorktreeSleep({ environmentId: runtimeEnvironmentId, worktreeId })
@@ -202,7 +214,7 @@ export function createTerminalShutdownActions(
         sleepingPaneKeys,
         tabs,
         worktreeId,
-        scopedTabIds: twinScope?.tabIds
+        scopedTabIds: scopedTabIds ?? undefined
       })
     }
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { hasActiveWorkspaceActivity } from '@/lib/worktree-activity-state'
-import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import { hasPaneSleepIntent } from '@/lib/worktree-sleep-intent'
 import { getIndexedAllWorktrees } from '@/store/worktree-repo-index'
 import type { Worktree } from '../../../../../../shared/worktree/types'
 import type { VisibleWorktreeOptions } from '../../compute-visible-worktrees'
@@ -58,8 +58,11 @@ export function useSleepingSweepRetention(
           worktreeIdsWithStructuredChat
         ),
       // Why: an empty binding on a still-open tab is unverifiable; a deliberate sleep or a closed last tab is not.
-      isUnverifiableGap: (worktreeId) =>
-        !hasWorktreeSleepIntent(worktreeId) && (tabsByWorktree?.[worktreeId]?.length ?? 0) > 0,
+      // A twin copy sleeps per tab, so the gap is deliberate only when every open tab is fenced.
+      isUnverifiableGap: (worktreeId) => {
+        const tabs = tabsByWorktree?.[worktreeId] ?? []
+        return tabs.length > 0 && !tabs.every((tab) => hasPaneSleepIntent(worktreeId, tab.id))
+      },
       // oxlint-disable-next-line react/purity -- Grace windows need wall time; the agent epoch sample stalls between bumps.
       nowMs: Date.now()
     })

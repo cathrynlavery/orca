@@ -180,6 +180,32 @@ export function registerPtyConnectionDeliberateSleepGuardTests(): void {
       expect(transport.connect).toHaveBeenCalledTimes(1)
     })
 
+    it('holds a twin copy fenced per tab that exists only as a unified tab', async () => {
+      const { connectPanePty } = await import('./pty-connection')
+      const { clearCopySleepIntent, markCopySleepIntent } =
+        await import('@/lib/worktree-sleep-intent')
+      const transport = createMockTransport()
+      transportFactoryQueue.push(transport)
+      mockStoreState = Object.assign(
+        { ...mockStoreState, activeWorktreeId: 'wt-other', tabsByWorktree: { 'wt-1': [] } },
+        {
+          getTab: (id: string) =>
+            id === 'unified-1' ? { id, contentType: 'terminal', entityId: 'tab-entity' } : null
+        }
+      )
+      markCopySleepIntent('wt-1', 'ssh:box', ['tab-entity'])
+      const deps = createDeps({ tabId: 'unified-1', isVisibleRef: { current: false } })
+
+      connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks()
+      expect(transport.connect).not.toHaveBeenCalled()
+
+      clearCopySleepIntent('wt-1', 'ssh:box')
+      await flushAsyncTicks()
+
+      expect(transport.connect).toHaveBeenCalledTimes(1)
+    })
+
     it('re-arms after a wake so a second sleep can hold the pane again', async () => {
       const { connectPanePty } = await import('./pty-connection')
       const { clearWorktreeSleepIntent, markWorktreeSleepIntent } =

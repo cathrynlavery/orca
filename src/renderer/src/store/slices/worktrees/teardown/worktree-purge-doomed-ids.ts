@@ -1,5 +1,6 @@
 import type { AppState } from '../../../types'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
+import { forgetTabSleepIntent } from '@/lib/worktree-sleep-intent'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
 import { forgetAgentPaneAuthorityAliasesByTabIds } from '../../agent-pane-authority'
@@ -84,6 +85,7 @@ export function collectSurfacePurgeDoomedIds(
   // Why: pane-authority aliases outlive the store maps they route to, so a purged
   // tab would leave a permanent entry pointing at a pane that no longer exists.
   forgetAgentPaneAuthorityAliasesByTabIds(doomedTabIds)
+  forgetTabSleepIntent(doomedTabIds)
   // Why: per-page browser maps are keyed by page id, so collect every page of a doomed workspace to evict here (the authoritative-scan reconcile skips closeBrowserTab's cleanup).
   for (const workspaceId of doomedBrowserWorkspaceIds) {
     for (const page of s.browserPagesByWorkspace[workspaceId] ?? []) {

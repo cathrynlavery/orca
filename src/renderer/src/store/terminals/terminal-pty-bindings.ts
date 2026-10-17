@@ -7,7 +7,15 @@ import {
   getPendingActivationSpawnCount
 } from './terminal-pty-identities'
 import { omitUnverifiedPtyLossTabIds } from './terminal-unverified-pty-loss'
-import { clearTabSleepIntent, clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import {
+  clearTabSleepIntent,
+  clearWorktreeSleepIntent,
+  hasWorktreeSleepIntent
+} from '@/lib/worktree-sleep-intent'
+import {
+  fenceTwinCopiesBeforeSharedWake,
+  resolveTwinTerminalTabHost
+} from './host-twin-terminal-scope'
 import { omitDisownedPtyIds } from './terminal-disowned-pty-sources'
 
 export function createTerminalPtyBindingActions(
@@ -191,6 +199,15 @@ export function createTerminalPtyBindingActions(
         }
       })
       // Why: a bound PTY means the workspace is awake by any route (CLI, automation, client wake), not only activation.
+      if (worktreeId && hasWorktreeSleepIntent(worktreeId)) {
+        // Why: a bind wakes its own copy of a twin; the other copies keep a per-tab fence.
+        fenceTwinCopiesBeforeSharedWake(
+          get(),
+          worktreeId,
+          resolveTwinTerminalTabHost(get(), worktreeId, tabId),
+          [tabId]
+        )
+      }
       clearWorktreeSleepIntent(worktreeId)
       if (worktreeId) {
         clearTabSleepIntent(worktreeId, [tabId])

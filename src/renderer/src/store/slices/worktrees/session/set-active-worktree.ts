@@ -18,13 +18,16 @@ import {
 import { findKnownWorktreeById } from '../listing/detected-worktree-meta'
 import { resolveActivatedWorktreeSurface } from './active-worktree-surface'
 import {
+  clearCopySleepIntent,
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
-  hasWorktreeSleepIntent,
-  markTabSleepIntent
+  getCopyFencedTabIds
 } from '@/lib/worktree-sleep-intent'
 import { hostWorktreeTarget } from '../../../../../../shared/worktree/host-qualified-identity'
-import { resolveHostTwinTerminalScope } from '../../../terminals/host-twin-terminal-scope'
+import {
+  fenceTwinCopiesBeforeSharedWake,
+  resolveHostTwinTerminalScope
+} from '../../../terminals/host-twin-terminal-scope'
 import {
   pendingActivationTerminalPrepCancels,
   shouldDeferActivationTerminalPrep
@@ -61,8 +64,15 @@ export function createSetActiveWorktree(
             hostWorktreeTarget({ id: worktreeId, hostId: executionHostId })
           )
         : null
+    // Why the recorded fence too: sleep removed the PTY evidence that attributed some of its tabs.
+    const wokenTabIds = twinScope
+      ? new Set([
+          ...twinScope.tabIds,
+          ...getCopyFencedTabIds(worktreeId ?? '', twinScope.copyHostId)
+        ])
+      : null
     const inWokenCopy = (tab: { id: string }): boolean =>
-      isWakeable(tab) && (!twinScope || twinScope.tabIds.has(tab.id))
+      isWakeable(tab) && (!wokenTabIds || wokenTabIds.has(tab.id))
     let shouldPrepareTerminalTabs = false
     let shouldTagTerminalTabs = false
     set((current) => {
@@ -189,14 +199,17 @@ export function createSetActiveWorktree(
     const worktreeTabIds = worktreeId
       ? (get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
       : []
-    if (twinScope && hasWorktreeSleepIntent(worktreeId)) {
+    if (worktreeId && twinScope) {
       // Why: the shared marker fenced every copy, so the copies not opened keep a per-tab fence.
       // Tabs no host claims wake with the opened copy, so none is fenced with no way back.
-      markTabSleepIntent(twinScope.otherCopyTabIds)
+      fenceTwinCopiesBeforeSharedWake(get(), worktreeId, twinScope.copyHostId)
     }
     clearWorktreeSleepIntent(worktreeId)
     if (worktreeId) {
-      clearTabSleepIntent(worktreeId, twinScope?.tabIds ?? worktreeTabIds)
+      if (twinScope) {
+        clearCopySleepIntent(worktreeId, twinScope.copyHostId)
+      }
+      clearTabSleepIntent(worktreeId, wokenTabIds ?? worktreeTabIds)
     }
 
     if (worktreeId && shouldPrepareTerminalTabs) {

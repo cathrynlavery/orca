@@ -106,6 +106,11 @@ export type HostTwinPurgeScopes = {
   byHost: Map<ExecutionHostId, Map<string, ExecutionHostId[]>>
 }
 
+/** Every host that publishes this workspace id, by the listing's host matching. */
+export function listWorkspacePublisherHostIds(s: AppState, workspaceId: string): ExecutionHostId[] {
+  return resolvePurgedPublishers(s, workspaceId, new Set()).survivors
+}
+
 /** Host targets whose id a host outside the purge still publishes. A raw id for the same id wins. */
 export function collectHostTwinPurgeScopes(
   s: AppState,

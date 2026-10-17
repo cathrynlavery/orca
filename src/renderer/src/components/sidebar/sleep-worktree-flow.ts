@@ -4,22 +4,22 @@ import {
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
   hasPaneSleepIntent,
-  markTabSleepIntent,
+  markCopySleepIntent,
   markWorktreeSleepIntent,
   withTabSleepTeardown,
   withWorktreeSleepTeardown
 } from '@/lib/worktree-sleep-intent'
-import type { ExecutionHostId } from '../../../../shared/execution-host'
-import { isExecutionHostAliasForWorktree } from '@/lib/worktree-execution-host-alias'
-import { findKnownWorktreeById } from '@/store/slices/worktrees/listing/detected-worktree-meta'
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
 import { translate } from '@/i18n/i18n'
-import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
+import { resolveHostTwinTerminalScope } from '@/store/terminals/host-twin-terminal-scope'
 import {
-  collectFullyTargetedTwinIds,
-  resolveHostTwinTerminalScope,
-  worktreeIdOfTarget
-} from '@/store/terminals/host-twin-terminal-scope'
+  planIsSelectedCopy,
+  planWorktreeSleep,
+  type SleepWorktreeTarget,
+  type WorktreeSleepPlan
+} from './sleep-worktree-plan'
+
+export type { SleepWorktreeTarget } from './sleep-worktree-plan'
 
 /**
  * Shared "sleep worktree" flow (close all panels to free memory / CPU)
@@ -37,9 +37,6 @@ import {
 export async function runSleepWorktree(target: SleepWorktreeTarget): Promise<void> {
   await runSleepWorktrees([target])
 }
-
-/** A raw id sleeps the whole worktree; a host target sleeps only that host's copy of a twin. */
-export type SleepWorktreeTarget = string | HostWorktreeTarget
 
 function getSidebarWorktreeOptions(worktreeId: string): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-worktree-id]')).filter(
@@ -188,78 +185,59 @@ export async function sleepWorktreesReportingFailures(
     shutdownWorktreeBrowsers,
     shutdownWorktreeTerminals
   } = useAppStore.getState()
-  const fullyTargetedIds = collectFullyTargetedTwinIds(useAppStore.getState(), targets)
-  const sharedStateHandled = new Set<string>()
-  // Why: the sleep-intent marker, browsers and VM suspension are keyed by the raw id, so while
-  // another host's copy stays awake they belong to it too. Only that host's terminals sleep, and
-  // they are fenced per tab: the shared marker would hold the awake copy's pane connects, and
-  // that copy's next bind would clear it and re-arm the slept copy's panes.
-  const twinTabIds = new Map<SleepWorktreeTarget, ReadonlySet<string>>()
-  for (const target of targets) {
-    const scope = fullyTargetedIds.has(worktreeIdOfTarget(target))
-      ? null
-      : resolveHostTwinTerminalScope(useAppStore.getState(), target)
-    if (scope) {
-      twinTabIds.set(target, scope.tabIds)
+  const plans = planWorktreeSleep(useAppStore.getState(), targets)
+  // Why per copy: a copy's tabs are read when it is reached, so a tab opened mid-batch is fenced.
+  const fenceCopy = (plan: WorktreeSleepPlan): string[] => {
+    const scope = resolveHostTwinTerminalScope(useAppStore.getState(), plan.target)
+    if (!scope) {
+      return []
     }
+    const newlyFenced = [...scope.tabIds].filter(
+      (tabId) => !hasPaneSleepIntent(plan.worktreeId, tabId)
+    )
+    markCopySleepIntent(plan.worktreeId, scope.copyHostId, scope.tabIds)
+    return newlyFenced
   }
-  const twinTargets = new Set(twinTabIds.keys())
-  // Why host-checked: a twin's copies share the id, so only the selected host's copy is active.
-  const namesHost = (target: SleepWorktreeTarget): boolean =>
-    twinTargets.has(target) || fullyTargetedIds.has(worktreeIdOfTarget(target))
-  // Why aliases: a paired runtime's SSH copy is selected under the runtime's id.
-  const targetIsHost = (target: SleepWorktreeTarget, hostId: ExecutionHostId | null): boolean => {
-    if (typeof target === 'string' || !hostId) {
-      return false
-    }
-    const row = findKnownWorktreeById(useAppStore.getState(), target.worktreeId, target.hostId)
-    return target.hostId === hostId || (row ? isExecutionHostAliasForWorktree(hostId, row) : false)
-  }
-  const sleptActiveTarget = targets.find(
-    (target) =>
-      worktreeIdOfTarget(target) === activeWorktreeId &&
-      (!namesHost(target) || targetIsHost(target, activeWorkspaceExecutionHostId))
+  const sleptActivePlan = plans.find((plan) =>
+    planIsSelectedCopy(
+      useAppStore.getState(),
+      plan,
+      activeWorktreeId,
+      activeWorkspaceExecutionHostId
+    )
   )
-  const lastTargetIndexById = new Map(
-    targets.map((target, index) => [worktreeIdOfTarget(target), index] as const)
-  )
-  const sleptActiveWorktreeId = sleptActiveTarget ? activeWorktreeId : null
-  if (sleptActiveTarget && sleptActiveWorktreeId) {
-    const restoreSidebarPosition = preserveSidebarWorktreePosition(sleptActiveWorktreeId)
+  const newlyFencedByPlan = new Map<WorktreeSleepPlan, string[]>()
+  if (sleptActivePlan && activeWorktreeId) {
+    const restoreSidebarPosition = preserveSidebarWorktreePosition(activeWorktreeId)
     // Why: clearing the active workspace can unmount TerminalPanes before
     // shutdownWorktreeTerminals writes PTY suppressions; mark first so those
     // exits do not stamp activity. Kept off the store so it cannot disturb the
     // sidebar's scroll restoration.
-    if (!twinTargets.has(sleptActiveTarget)) {
-      markWorktreeSleepIntent(sleptActiveWorktreeId)
+    if (sleptActivePlan.copyOnly) {
+      newlyFencedByPlan.set(sleptActivePlan, fenceCopy(sleptActivePlan))
+    } else {
+      markWorktreeSleepIntent(activeWorktreeId)
     }
     setActiveWorktree(null)
     restoreSidebarPosition()
   }
   const errors: string[] = []
-  const failedWorktreeIds = new Set<string>()
-  const failedTargets = new Set<SleepWorktreeTarget>()
-  const newlyFencedTabIds = new Map<SleepWorktreeTarget, string[]>()
+  const failedPlans = new Set<WorktreeSleepPlan>()
+  const fail = (plan: WorktreeSleepPlan, err: unknown, step: string): void => {
+    console.error(`[sleep-worktree] ${step} failed`, { worktreeId: plan.worktreeId, error: err })
+    failedPlans.add(plan)
+    errors.push(describeSleepFailure(err))
+  }
+  const hasFailed = (worktreeId: string): boolean =>
+    [...failedPlans].some((plan) => plan.worktreeId === worktreeId)
   try {
-    for (const [index, target] of targets.entries()) {
-      const worktreeId = worktreeIdOfTarget(target)
-      const twin = twinTargets.has(target)
-      const twinTabs = twinTabIds.get(target) ?? []
-      // Why last: suspending the VM drops its transport, so every copy stops before it.
-      const suspendsSharedVm = !twin && index === lastTargetIndexById.get(worktreeId)
+    for (const plan of plans) {
+      const { target, worktreeId, copyOnly } = plan
       // Why: the marker outlives teardown so the panes left mounted stay cold
       // until an explicit wake (#10205); mark per workspace so an earlier
       // slow teardown never leaves a later, still-awake one marked.
-      // Why once: a batch naming every copy of a twin shares one raw-id browser registry and VM.
-      const ownsSharedState = !twin && !sharedStateHandled.has(worktreeId)
-      sharedStateHandled.add(worktreeId)
-      if (twin) {
-        // Why only new ones: a failed repeat sleep must not wake a copy that is already asleep.
-        newlyFencedTabIds.set(
-          target,
-          [...twinTabs].filter((tabId) => !hasPaneSleepIntent(worktreeId, tabId))
-        )
-        markTabSleepIntent(twinTabs)
+      if (copyOnly) {
+        newlyFencedByPlan.set(plan, [...(newlyFencedByPlan.get(plan) ?? []), ...fenceCopy(plan)])
       } else {
         markWorktreeSleepIntent(worktreeId)
       }
@@ -269,14 +247,11 @@ export async function sleepWorktreesReportingFailures(
         // other teardown runs, terminals second so the PTY kill uses the same
         // ordering on both paths. Without the browser thunk here, sleep leaks
         // browserPagesByWorkspace entries and live webviews for the slept worktree.
-        if (ownsSharedState) {
+        if (plan.ownsSharedBrowsers) {
           await withWorktreeSleepTeardown(worktreeId, () => shutdownWorktreeBrowsers(worktreeId))
         }
       } catch (err) {
-        console.error('[sleep-worktree] browser shutdown failed', { worktreeId, error: err })
-        failedWorktreeIds.add(worktreeId)
-        failedTargets.add(target)
-        errors.push(describeSleepFailure(err))
+        fail(plan, err, 'browser shutdown')
         continue
       }
       try {
@@ -288,65 +263,70 @@ export async function sleepWorktreesReportingFailures(
         // serializer buffers into buffersByLeafId for SSH wake to reseed
         // scrollback. See DESIGN_DOC_TERMINAL_HISTORY_FIX_V2.md §3.3.c.
         const teardown = async (): Promise<void> => {
-          await shutdownWorktreeTerminals(target, { keepIdentifiers: true })
+          await shutdownWorktreeTerminals(target, {
+            keepIdentifiers: true,
+            ...(plan.everyCopy ? { unattributedTabs: plan.unattributedTabs } : {})
+          })
           if (
-            suspendsSharedVm &&
-            !failedWorktreeIds.has(worktreeId) &&
+            plan.suspendsSharedVm &&
+            !hasFailed(worktreeId) &&
             typeof window !== 'undefined' &&
             window.api?.ephemeralVm?.suspendWorkspace
           ) {
             await window.api.ephemeralVm.suspendWorkspace({ workspaceId: worktreeId })
           }
         }
-        // Why tab-scoped for a twin: a wake of the other copy during this teardown still counts.
-        await (twin
-          ? withTabSleepTeardown(twinTabs, teardown)
+        // Why tab-scoped for one copy: a wake of the other copy during this teardown still counts.
+        await (copyOnly
+          ? withTabSleepTeardown(
+              resolveHostTwinTerminalScope(useAppStore.getState(), target)?.tabIds ?? [],
+              teardown
+            )
           : withWorktreeSleepTeardown(worktreeId, teardown))
         // Why: a workspace the user activated during the batch is awake by their choice.
-        const { activeWorktreeId: nowActive, activeWorkspaceExecutionHostId: nowActiveHost } =
-          useAppStore.getState()
-        if (!twin && nowActive === worktreeId) {
-          clearWorktreeSleepIntent(worktreeId)
-        } else if (twin && nowActive === worktreeId && targetIsHost(target, nowActiveHost)) {
-          clearTabSleepIntent(worktreeId, twinTabs)
+        const now = useAppStore.getState()
+        if (
+          planIsSelectedCopy(now, plan, now.activeWorktreeId, now.activeWorkspaceExecutionHostId)
+        ) {
+          if (copyOnly) {
+            clearTabSleepIntent(worktreeId, newlyFencedByPlan.get(plan) ?? [])
+          } else {
+            clearWorktreeSleepIntent(worktreeId)
+          }
         }
       } catch (err) {
-        console.error('[sleep-worktree] terminal or host suspension failed', {
-          worktreeId,
-          error: err
-        })
-        failedWorktreeIds.add(worktreeId)
-        failedTargets.add(target)
-        errors.push(describeSleepFailure(err))
+        fail(plan, err, 'terminal or host suspension')
       }
     }
   } finally {
     // Why: a failed sleep leaves the workspace awake and retryable.
-    for (const target of failedTargets) {
-      const worktreeId = worktreeIdOfTarget(target)
-      if (twinTabIds.has(target)) {
-        clearTabSleepIntent(worktreeId, newlyFencedTabIds.get(target) ?? [])
+    for (const plan of failedPlans) {
+      if (plan.copyOnly) {
+        // Why only new fences: a failed repeat sleep must not wake a copy that is already asleep.
+        clearTabSleepIntent(plan.worktreeId, newlyFencedByPlan.get(plan) ?? [])
         continue
       }
-      if (fullyTargetedIds.has(worktreeId)) {
+      if (plan.everyCopy) {
         // Why: the shared marker goes, so copies that did sleep keep a per-tab fence.
-        for (const slept of targets) {
-          if (worktreeIdOfTarget(slept) === worktreeId && !failedTargets.has(slept)) {
-            markTabSleepIntent(
-              resolveHostTwinTerminalScope(useAppStore.getState(), slept)?.tabIds ?? []
-            )
+        for (const slept of plans) {
+          if (slept.worktreeId === plan.worktreeId && !failedPlans.has(slept)) {
+            fenceCopy(slept)
           }
         }
       }
-      clearWorktreeSleepIntent(worktreeId)
+      clearWorktreeSleepIntent(plan.worktreeId)
     }
-    if (sleptActiveTarget && sleptActiveWorktreeId && failedTargets.has(sleptActiveTarget)) {
-      if (typeof sleptActiveTarget !== 'string' && namesHost(sleptActiveTarget)) {
-        setActiveWorktree(sleptActiveWorktreeId, sleptActiveTarget.hostId)
+    if (sleptActivePlan && activeWorktreeId && failedPlans.has(sleptActivePlan)) {
+      const { target } = sleptActivePlan
+      if (typeof target !== 'string' && (sleptActivePlan.copyOnly || sleptActivePlan.everyCopy)) {
+        setActiveWorktree(activeWorktreeId, target.hostId)
       } else {
-        setActiveWorktree(sleptActiveWorktreeId)
+        setActiveWorktree(activeWorktreeId)
       }
     }
   }
-  return { failedWorktreeIds: [...failedWorktreeIds], errors }
+  return {
+    failedWorktreeIds: [...new Set([...failedPlans].map((plan) => plan.worktreeId))],
+    errors
+  }
 }

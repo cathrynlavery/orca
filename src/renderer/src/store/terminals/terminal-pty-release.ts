@@ -1,5 +1,5 @@
 import { isRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
-import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import { hasPaneSleepIntent } from '@/lib/worktree-sleep-intent'
 import type { TerminalSlice, TerminalStoreGet, TerminalStoreSet } from './terminal-state'
 import {
   consumePendingActivationSpawn,
@@ -107,7 +107,7 @@ export function createTerminalPtyReleaseActions(
         worktreeId &&
         !wasActivationSpawn &&
         !isRemoteRuntimeMirror &&
-        !hasWorktreeSleepIntent(worktreeId) &&
+        !hasPaneSleepIntent(worktreeId, tabId) &&
         !(ptyId && get().suppressedPtyExitIds[ptyId])
       ) {
         get().bumpWorktreeActivity(worktreeId)

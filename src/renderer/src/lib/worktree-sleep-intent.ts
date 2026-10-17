@@ -72,10 +72,56 @@ export function onWorktreeSleepIntentCleared(worktreeId: string, listener: () =>
 // so the slept copy's tabs are fenced one by one instead.
 const sleepingTabIds = new Set<string>()
 const wakeListenersByTabId = new Map<string, Set<() => void>>()
+// Why recorded per copy: a copy's tabs are attributed from PTY evidence its sleep removes, so
+// opening it again clears exactly what was fenced, not a recomputation that can miss tabs.
+const fencedTabIdsByCopy = new Map<string, Set<string>>()
 
-export function markTabSleepIntent(tabIds: Iterable<string>): void {
+function copyKey(worktreeId: string, copyHostId: string): string {
+  return `${copyHostId}\u0000${worktreeId}`
+}
+
+export function markCopySleepIntent(
+  worktreeId: string,
+  copyHostId: string,
+  tabIds: Iterable<string>
+): void {
+  const key = copyKey(worktreeId, copyHostId)
+  const fenced = fencedTabIdsByCopy.get(key) ?? new Set<string>()
   for (const tabId of tabIds) {
     sleepingTabIds.add(tabId)
+    fenced.add(tabId)
+  }
+  if (fenced.size > 0) {
+    fencedTabIdsByCopy.set(key, fenced)
+  }
+}
+
+export function getCopyFencedTabIds(worktreeId: string, copyHostId: string): string[] {
+  return [...(fencedTabIdsByCopy.get(copyKey(worktreeId, copyHostId)) ?? [])]
+}
+
+/** Wakes every tab fenced for this copy of a twin. */
+export function clearCopySleepIntent(worktreeId: string, copyHostId: string): void {
+  clearTabSleepIntent(worktreeId, [
+    ...(fencedTabIdsByCopy.get(copyKey(worktreeId, copyHostId)) ?? [])
+  ])
+}
+
+// Why: a purged tab can never wake, so its fence and waiting connects must not outlive it.
+export function forgetTabSleepIntent(tabIds: Iterable<string>): void {
+  for (const tabId of tabIds) {
+    sleepingTabIds.delete(tabId)
+    tearingDownTabIds.delete(tabId)
+    wakeListenersByTabId.delete(tabId)
+    dropFromCopyRecords(tabId)
+  }
+}
+
+function dropFromCopyRecords(tabId: string): void {
+  for (const [key, fenced] of fencedTabIdsByCopy) {
+    if (fenced.delete(tabId) && fenced.size === 0) {
+      fencedTabIdsByCopy.delete(key)
+    }
   }
 }
 
@@ -105,7 +151,11 @@ export function clearTabSleepIntent(worktreeId: string, tabIds: Iterable<string>
     return
   }
   for (const tabId of tabIds) {
-    if (tearingDownTabIds.has(tabId) || !sleepingTabIds.delete(tabId)) {
+    if (tearingDownTabIds.has(tabId)) {
+      continue
+    }
+    dropFromCopyRecords(tabId)
+    if (!sleepingTabIds.delete(tabId)) {
       continue
     }
     const listeners = wakeListenersByTabId.get(tabId)

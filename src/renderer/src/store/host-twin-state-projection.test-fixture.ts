@@ -6,7 +6,7 @@ import {
   updateNativeChatComposerDraft
 } from '@/components/native-chat/native-chat-composer-draft-store'
 import {
-  clearTabSleepIntent,
+  forgetTabSleepIntent,
   forgetWorktreeSleepIntent,
   hasPaneSleepIntent
 } from '@/lib/worktree-sleep-intent'
@@ -18,9 +18,10 @@ import type { HostTwinFixture, HostTwinSide } from './host-twin.test-fixture'
 
 export function resetHostTwinModuleStores(fixture: HostTwinFixture): void {
   forgetWorktreeSleepIntent(fixture.workspaceKey)
-  clearTabSleepIntent(fixture.workspaceKey, [
+  forgetTabSleepIntent([
     fixture.local.terminalTabId,
-    fixture.remote.terminalTabId
+    fixture.remote.terminalTabId,
+    ...(fixture.store.getState().tabsByWorktree[fixture.workspaceKey] ?? []).map((tab) => tab.id)
   ])
   clearHugeRepoWarningDismissalsForTests()
   for (const s of [fixture.local, fixture.remote]) {

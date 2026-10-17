@@ -19,6 +19,7 @@ import type {
 import type { NativeChatLaunchDraft, NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 import type { AgentStatusWorktreeShutdownReason } from '../slices/agent-status'
 import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
+import type { UnattributedTabPolicy } from './host-twin-terminal-scope'
 import type {
   TerminalTabCloseReason,
   TerminalTabRetirementPlan
@@ -149,6 +150,8 @@ export type TerminalActions = {
       sleepingPaneKeys?: string[]
       expectedRuntimePtyIds?: string[]
       backendOwnsPtyTeardown?: boolean
+      /** For a host target with a twin: what to do with tabs no copy can claim. */
+      unattributedTabs?: UnattributedTabPolicy
     }
   ) => Promise<void>
   /** Captures resumable pane evidence and publishes suppression before exact physical teardown. */
