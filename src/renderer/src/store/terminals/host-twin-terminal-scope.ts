@@ -1,11 +1,12 @@
 import type { AppState } from '../types'
-import { parseExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  parseExecutionHostId,
+  toRuntimeExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
 import { normalizeWorktreePurgeTarget } from '../slices/worktree-purge-target'
-import {
-  collectHostTwinPurgeScopes,
-  listWorkspacePublisherHostIds
-} from '../slices/worktrees/teardown/host-twin-worktree-purge'
+import { collectHostTwinPurgeScopes } from '../slices/worktrees/teardown/host-twin-worktree-purge'
 import { removedHostCanonicalizer } from '../repos/repo-removal-host-twin-attribution'
 import {
   belongsToRemovedHost,
@@ -15,12 +16,11 @@ import {
   type HostEvidence
 } from '../repos/host-twin-terminal-evidence'
 import { runtimeEnvironmentIdForWorkspaceOwner } from '@/lib/resolve-owner'
-import { isRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
+import { findKnownWorktreeById } from '../slices/worktrees/listing/detected-worktree-meta'
 import {
-  hasTabSleepFence,
-  hasWorktreeSleepIntent,
-  markCopySleepIntent
-} from '@/lib/worktree-sleep-intent'
+  isRemoteRuntimePtyId,
+  parseRemoteRuntimePtyId
+} from '../../../../shared/remote-runtime-pty-id'
 import { resolveTerminalTeardownOwner, type TerminalTeardownOwner } from './terminal-teardown-owner'
 
 /** One host's terminals under a worktree id that another host still publishes. */
@@ -40,11 +40,11 @@ export type HostTwinTerminalScope = {
   unattributedTabIds: ReadonlySet<string>
   /** Whether the target's tabs still name a PTY (layout, reconnect or relay hint). */
   hasPtyEvidence: boolean
-  /** The other hosts that publish the id; their own copies stop their PTYs. */
+  /** The other hosts that publish the id, with their paired runtimes; they stop their own PTYs. */
   otherHostIds: readonly ExecutionHostId[]
 }
 
-type TerminalTabOwners = {
+export type TerminalTabOwners = {
   /** The one host a terminal tab belongs to, or null when none or several can claim it. */
   ownerByTabId: Map<string, ExecutionHostId | null>
   evidenceByTabId: Map<string, HostEvidence[]>
@@ -53,7 +53,7 @@ type TerminalTabOwners = {
 }
 
 /** Attributes every terminal tab of a workspace to one of `hostIds` in a single pass. */
-function collectTerminalTabOwners(
+export function collectTerminalTabOwners(
   state: AppState,
   worktreeId: string,
   hostIds: readonly ExecutionHostId[]
@@ -118,7 +118,7 @@ function collectTerminalTabOwners(
   return owners
 }
 
-function tabsOwnedBy(owners: TerminalTabOwners, hostId: ExecutionHostId): Set<string> {
+export function tabsOwnedBy(owners: TerminalTabOwners, hostId: ExecutionHostId): Set<string> {
   return new Set(
     [...owners.ownerByTabId].flatMap(([tabId, owner]) => (owner === hostId ? [tabId] : []))
   )
@@ -153,6 +153,26 @@ export function splitTabPaneKeys(
       ([leafId, ptyId]) => (ptyIds.has(ptyId) ? [`${tab.id}:${leafId}`] : [])
     )
   )
+}
+
+// Why: an SSH copy reached through a paired runtime runs its PTYs under that runtime's id.
+function withRuntimeAliases(
+  state: AppState,
+  worktreeId: string,
+  hostIds: readonly ExecutionHostId[]
+): ExecutionHostId[] {
+  return [
+    ...new Set(
+      hostIds.flatMap((hostId) => {
+        const runtimeOwner = findKnownWorktreeById(
+          state,
+          worktreeId,
+          hostId
+        )?.runtimeOwnerEnvironmentId?.trim()
+        return runtimeOwner ? [hostId, toRuntimeExecutionHostId(runtimeOwner)] : [hostId]
+      })
+    )
+  ]
 }
 
 /**
@@ -202,90 +222,12 @@ export function resolveHostTwinTerminalScope(
       )
     ),
     hasPtyEvidence: [...tabIds].some(hasEvidence),
-    otherHostIds: twinHostIds.get(target.worktreeId) ?? []
-  }
-}
-
-function fenceCopiesExcept(
-  worktreeId: string,
-  hostIds: readonly ExecutionHostId[],
-  owners: TerminalTabOwners,
-  wokenHostId: ExecutionHostId | null,
-  exceptTabIds: readonly string[]
-): string[] {
-  const newlyFenced: string[] = []
-  for (const hostId of hostIds) {
-    if (hostId === wokenHostId) {
-      continue
-    }
-    const fenced = [...tabsOwnedBy(owners, hostId)].filter((id) => !exceptTabIds.includes(id))
-    newlyFenced.push(...fenced.filter((tabId) => !hasTabSleepFence(tabId)))
-    markCopySleepIntent(worktreeId, hostId, fenced)
-  }
-  return newlyFenced
-}
-
-/**
- * Before a wake clears the shared marker, the copies not woken get per-tab fences, so waking one
- * copy of a twin never re-arms another.
- */
-export function fenceTwinCopiesBeforeSharedWake(
-  state: AppState,
-  worktreeId: string,
-  wokenHostId: ExecutionHostId
-): void {
-  if (!hasWorktreeSleepIntent(worktreeId)) {
-    return
-  }
-  const hostIds = listWorkspacePublisherHostIds(state, worktreeId)
-  if (hostIds.length >= 2) {
-    fenceCopiesExcept(
-      worktreeId,
-      hostIds,
-      collectTerminalTabOwners(state, worktreeId, hostIds),
-      wokenHostId,
-      []
+    otherHostIds: withRuntimeAliases(
+      state,
+      target.worktreeId,
+      twinHostIds.get(target.worktreeId) ?? []
     )
   }
-}
-
-/**
- * A raw-id sleep of a twin records every copy's tabs too: its sleep removes the evidence that
- * attributes some of them, so opening one copy later must not wake the other copy's tabs.
- * Returns the tabs it newly fenced, so a failed sleep can take back only those.
- */
-export function fenceEveryTwinCopy(state: AppState, worktreeId: string): string[] {
-  const hostIds = listWorkspacePublisherHostIds(state, worktreeId)
-  return hostIds.length < 2
-    ? []
-    : fenceCopiesExcept(
-        worktreeId,
-        hostIds,
-        collectTerminalTabOwners(state, worktreeId, hostIds),
-        null,
-        []
-      )
-}
-
-/**
- * For a bind while any sleep fence is set: the bound tab's copy, in one attribution pass, with
- * the other copies fenced first when the shared marker is set. Null without a twin.
- */
-export function prepareTwinBindWake(
-  state: AppState,
-  worktreeId: string,
-  tabId: string
-): ExecutionHostId | null {
-  const hostIds = listWorkspacePublisherHostIds(state, worktreeId)
-  if (hostIds.length < 2) {
-    return null
-  }
-  const owners = collectTerminalTabOwners(state, worktreeId, hostIds)
-  const copyHostId = owners.ownerByTabId.get(tabId) ?? null
-  if (hasWorktreeSleepIntent(worktreeId)) {
-    fenceCopiesExcept(worktreeId, hostIds, owners, copyHostId, [tabId])
-  }
-  return copyHostId
 }
 
 /**
@@ -311,6 +253,17 @@ export function resolveHostTwinTeardownOwner(
   }
   // Why: with no bound PTY a hinted shell may still run on its host; no binding proves no death.
   if (ptyIds.length === 0 && scope.hasPtyEvidence && !scope.runtimeEnvironmentId) {
+    return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
+  }
+  // Why: a split tab can hold a pane on a third server; this copy's stop never reaches it.
+  if (
+    scope.runtimeEnvironmentId &&
+    ptyIds.some((ptyId) => {
+      // A legacy id names no server; it is this copy's, as before.
+      const environmentId = parseRemoteRuntimePtyId(ptyId)?.environmentId?.trim()
+      return Boolean(environmentId) && environmentId !== scope.runtimeEnvironmentId
+    })
+  ) {
     return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
   }
   if (scope.runtimeEnvironmentId || !ptyIds.some(isRemoteRuntimePtyId)) {

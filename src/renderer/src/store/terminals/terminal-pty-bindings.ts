@@ -14,7 +14,7 @@ import {
   hasCopySleepFences,
   hasWorktreeSleepIntent
 } from '@/lib/worktree-sleep-intent'
-import { prepareTwinBindWake } from './host-twin-terminal-scope'
+import { prepareTwinBindWake } from './host-twin-copy-fences'
 import { omitDisownedPtyIds } from './terminal-disowned-pty-sources'
 
 export function createTerminalPtyBindingActions(

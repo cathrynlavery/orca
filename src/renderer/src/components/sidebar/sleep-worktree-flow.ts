@@ -13,10 +13,8 @@ import {
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
 import { translate } from '@/i18n/i18n'
 import { describeSleepFailure } from './sleep-failure-message'
-import {
-  fenceEveryTwinCopy,
-  resolveHostTwinTerminalScope
-} from '@/store/terminals/host-twin-terminal-scope'
+import { resolveHostTwinTerminalScope } from '@/store/terminals/host-twin-terminal-scope'
+import { fenceEveryTwinCopy } from '@/store/terminals/host-twin-copy-fences'
 import {
   planIsSelectedCopy,
   planWorktreeSleep,

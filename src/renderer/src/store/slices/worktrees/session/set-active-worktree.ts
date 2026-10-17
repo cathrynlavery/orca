@@ -25,10 +25,8 @@ import {
   isTabFencedForOtherCopy
 } from '@/lib/worktree-sleep-intent'
 import { hostWorktreeTarget } from '../../../../../../shared/worktree/host-qualified-identity'
-import {
-  fenceTwinCopiesBeforeSharedWake,
-  resolveHostTwinTerminalScope
-} from '../../../terminals/host-twin-terminal-scope'
+import { resolveHostTwinTerminalScope } from '../../../terminals/host-twin-terminal-scope'
+import { fenceTwinCopiesBeforeSharedWake } from '../../../terminals/host-twin-copy-fences'
 import {
   pendingActivationTerminalPrepCancels,
   shouldDeferActivationTerminalPrep

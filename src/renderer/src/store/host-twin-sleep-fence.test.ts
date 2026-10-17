@@ -618,4 +618,46 @@ describe('per-tab sleep fences of a twin', () => {
     const sleeps = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.sleep')
     expect(sleeps).toHaveLength(1)
   })
+
+  it('refuses a split tab with a pane on a server outside the twin', async () => {
+    const f = twin('local+runtime')
+    const thirdServerPty = toRemoteRuntimePtyId('handle-c', 'env-c')
+    splitLocalTabAcrossCopies(f)
+    f.store.setState((s) => ({
+      ptyIdsByTabId: {
+        ...s.ptyIdsByTabId,
+        [f.local.terminalTabId]: [f.local.ptyId, f.remote.ptyId, thirdServerPty]
+      }
+    }))
+
+    const outcome = await sleepWorktreesReportingFailures(both(f))
+
+    expect(outcome.failedWorktreeIds).toEqual([f.workspaceKey])
+    expect(f.store.getState().ptyIdsByTabId[f.local.terminalTabId]).toContain(thirdServerPty)
+  })
+
+  it("does not stop a paired runtime twice for its SSH copy's split pane", async () => {
+    const f = twin()
+    const pairedPty = toRemoteRuntimePtyId('handle-paired', TWIN_RUNTIME_ENV)
+    f.store.setState((s) => ({
+      worktreesByRepo: {
+        [f.projectId]: (s.worktreesByRepo[f.projectId] ?? []).map((row) =>
+          row.hostId === f.remote.hostId
+            ? { ...row, runtimeOwnerEnvironmentId: TWIN_RUNTIME_ENV }
+            : row
+        )
+      },
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [f.local.terminalTabId]: [f.local.ptyId, pairedPty] },
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+          tab.id === f.local.terminalTabId ? { ...tab, executionHostId: undefined } : tab
+        )
+      }
+    }))
+
+    await sleepWorktreesReportingFailures(both(f).toReversed())
+
+    const sleeps = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.sleep')
+    expect(sleeps.length).toBeLessThanOrEqual(1)
+  })
 })
