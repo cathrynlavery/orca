@@ -199,10 +199,13 @@ export async function sleepWorktreesReportingFailures(
     }
   }
   const twinTargets = new Set(twinTabIds.keys())
+  // Why host-checked: a twin's copies share the id, so only the selected host's copy is active.
+  const namesHost = (target: SleepWorktreeTarget): boolean =>
+    twinTargets.has(target) || fullyTargetedIds.has(worktreeIdOfTarget(target))
   const sleptActiveTarget = targets.find(
     (target) =>
       worktreeIdOfTarget(target) === activeWorktreeId &&
-      (!twinTargets.has(target) ||
+      (!namesHost(target) ||
         (typeof target !== 'string' && target.hostId === activeWorkspaceExecutionHostId))
   )
   const sleptActiveWorktreeId = sleptActiveTarget ? activeWorktreeId : null
@@ -296,15 +299,26 @@ export async function sleepWorktreesReportingFailures(
   } finally {
     // Why: a failed sleep leaves the workspace awake and retryable.
     for (const target of failedTargets) {
+      const worktreeId = worktreeIdOfTarget(target)
       const tabIds = twinTabIds.get(target)
       if (tabIds) {
-        clearTabSleepIntent(worktreeIdOfTarget(target), tabIds)
-      } else {
-        clearWorktreeSleepIntent(worktreeIdOfTarget(target))
+        clearTabSleepIntent(worktreeId, tabIds)
+        continue
       }
+      if (fullyTargetedIds.has(worktreeId)) {
+        // Why: the shared marker goes, so copies that did sleep keep a per-tab fence.
+        for (const slept of targets) {
+          if (worktreeIdOfTarget(slept) === worktreeId && !failedTargets.has(slept)) {
+            markTabSleepIntent(
+              resolveHostTwinTerminalScope(useAppStore.getState(), slept)?.tabIds ?? []
+            )
+          }
+        }
+      }
+      clearWorktreeSleepIntent(worktreeId)
     }
     if (sleptActiveTarget && sleptActiveWorktreeId && failedTargets.has(sleptActiveTarget)) {
-      if (typeof sleptActiveTarget !== 'string' && twinTargets.has(sleptActiveTarget)) {
+      if (typeof sleptActiveTarget !== 'string' && namesHost(sleptActiveTarget)) {
         setActiveWorktree(sleptActiveWorktreeId, sleptActiveTarget.hostId)
       } else {
         setActiveWorktree(sleptActiveWorktreeId)

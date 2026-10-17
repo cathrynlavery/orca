@@ -282,4 +282,17 @@ describe('kill and sleep on one host of a twin', () => {
     expect(sleeps.map(([args]) => args.selector)).toEqual([TWIN_RUNTIME_ENV])
     expect(shutdownBrowsers).toHaveBeenCalledTimes(1)
   })
+
+  it('refuses when the target copy has only PTY hints and no live binding', async () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [f.remote.terminalTabId]: [] }
+    }))
+
+    await expect(
+      f.store
+        .getState()
+        .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }))
+    ).rejects.toThrow('ambiguous_terminal_owner')
+  })
 })

@@ -5,6 +5,7 @@ import { normalizeWorktreePurgeTarget } from '../slices/worktree-purge-target'
 import { collectHostTwinPurgeScopes } from '../slices/worktrees/teardown/host-twin-worktree-purge'
 import { collectRemovedHostTwinState } from '../repos/repo-removal-host-twin-attribution'
 import { findKnownWorktreeById } from '../slices/worktrees/listing/detected-worktree-meta'
+import { collectPtyIdsForTab } from '../slices/terminal-tab-retirement'
 import { isRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
 import { resolveTerminalTeardownOwner, type TerminalTeardownOwner } from './terminal-teardown-owner'
 
@@ -21,6 +22,8 @@ export type HostTwinTerminalScope = {
   mixedTabPtyIds: ReadonlySet<string>
   /** Live tabs no host can be shown to own; their teardown is refused too. */
   unattributedLiveTabIds: ReadonlySet<string>
+  /** Whether the target's tabs still name a PTY (layout, reconnect or relay hint). */
+  hasPtyEvidence: boolean
 }
 
 function paneKeysForTabs(state: AppState, tabIds: ReadonlySet<string>): string[] {
@@ -96,7 +99,11 @@ export function resolveHostTwinTerminalScope(
         ? requested.environmentId
         : (row?.runtimeOwnerEnvironmentId?.trim() ?? null) || null,
     mixedTabPtyIds,
-    unattributedLiveTabIds
+    unattributedLiveTabIds,
+    hasPtyEvidence: (state.tabsByWorktree[target.worktreeId] ?? []).some(
+      (tab) =>
+        terminalTabIds.has(tab.id) && collectPtyIdsForTab(state, tab.id, tab.ptyId).length > 0
+    )
   }
 }
 
@@ -112,6 +119,15 @@ export function resolveHostTwinTeardownOwner(
   // Why: a split tab shared with the twin can't lose only some panes here, so nothing is stopped.
   if (
     (scope.mixedTabPtyIds.size > 0 || scope.unattributedLiveTabIds.size > 0) &&
+    !backendOwnsPtyTeardown
+  ) {
+    return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
+  }
+  // Why: with no bound PTY a hinted shell may still run on its host; no binding proves no death.
+  if (
+    ptyIds.length === 0 &&
+    scope.hasPtyEvidence &&
+    !scope.runtimeEnvironmentId &&
     !backendOwnsPtyTeardown
   ) {
     return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
