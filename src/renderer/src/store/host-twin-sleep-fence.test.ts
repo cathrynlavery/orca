@@ -12,7 +12,12 @@ import {
   markCopySleepIntent
 } from '@/lib/worktree-sleep-intent'
 import { resetHostTwinModuleStores } from './host-twin-state-projection.test-fixture'
-import { createHostTwinFixture, type HostTwinFixture } from './host-twin.test-fixture'
+import {
+  createHostTwinFixture,
+  TWIN_RUNTIME_ENV,
+  type HostTwinFixture
+} from './host-twin.test-fixture'
+import { toRemoteRuntimePtyId } from '../../../shared/remote-runtime-pty-id'
 import { listWorkspacePublisherHostIds } from './slices/worktrees/teardown/host-twin-worktree-purge'
 
 const appStore = vi.hoisted((): { current: HostTwinFixture['store'] | null } => ({
@@ -37,7 +42,7 @@ vi.mock('sonner', () => ({
 const { sleepWorktreesReportingFailures } = await import('@/components/sidebar/sleep-worktree-flow')
 
 const ptyKill = vi.fn()
-const runtimeCall = vi.fn((args: RuntimeEnvironmentCallRequest) => {
+function answerLikeHost(args: RuntimeEnvironmentCallRequest): unknown {
   const compatible = createCompatibleRuntimeStatusResponseIfNeeded(args)
   if (compatible) {
     return compatible
@@ -47,7 +52,8 @@ const runtimeCall = vi.fn((args: RuntimeEnvironmentCallRequest) => {
       ? { stopped: 1, stoppedPtyIds: [], livePtyIds: [], postStopVerified: true }
       : {}
   return { id: args.method, ok: true, result, _meta: { runtimeId: 'runtime-b' } }
-})
+}
+const runtimeCall = vi.fn(answerLikeHost)
 const shutdownBrowsers = vi.fn()
 
 let current: HostTwinFixture | null = null
@@ -75,7 +81,8 @@ function addTab(f: HostTwinFixture, id: string, ptyId: string): void {
 beforeEach(() => {
   clearRuntimeCompatibilityCacheForTests()
   ptyKill.mockReset()
-  runtimeCall.mockClear()
+  runtimeCall.mockReset()
+  runtimeCall.mockImplementation(answerLikeHost)
   shutdownBrowsers.mockReset()
   vi.stubGlobal('window', {
     api: {
@@ -452,5 +459,46 @@ describe('per-tab sleep fences of a twin', () => {
     // The local tab lost the live ids that attributed it, yet it stays asleep with its copy.
     expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(true)
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
+  })
+
+  it("guards a split tab's runtime pane before the runtime copy's host-wide stop", async () => {
+    const f = twin('local+runtime')
+    const splitPty = toRemoteRuntimePtyId('handle-split', TWIN_RUNTIME_ENV)
+    f.store.setState((s) => ({
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [f.local.terminalTabId]: [f.local.ptyId, splitPty] },
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+          tab.id === f.local.terminalTabId ? { ...tab, executionHostId: undefined } : tab
+        )
+      }
+    }))
+    let guardedDuringHostStop: boolean | null = null
+    runtimeCall.mockImplementation((args: RuntimeEnvironmentCallRequest) => {
+      if (args.method === 'terminal.sleep' && guardedDuringHostStop === null) {
+        guardedDuringHostStop = f.store.getState().isPtyShutdownPending(splitPty)
+      }
+      return answerLikeHost(args)
+    })
+
+    await sleepWorktreesReportingFailures(both(f).toReversed())
+
+    expect(guardedDuringHostStop).toBe(true)
+  })
+
+  it('keeps local as a publisher beside a paired runtime SSH copy', () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      worktreesByRepo: {
+        [f.projectId]: (s.worktreesByRepo[f.projectId] ?? []).map((row) =>
+          row.hostId === f.remote.hostId
+            ? { ...row, runtimeOwnerEnvironmentId: TWIN_RUNTIME_ENV }
+            : row
+        )
+      }
+    }))
+
+    expect(listWorkspacePublisherHostIds(f.store.getState(), f.workspaceKey)).toContain(
+      f.local.hostId
+    )
   })
 })

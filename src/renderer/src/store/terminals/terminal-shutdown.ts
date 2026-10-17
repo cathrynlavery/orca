@@ -83,7 +83,12 @@ export function createTerminalShutdownActions(
       const runtimeEnvironmentId =
         teardownOwner.kind === 'resolved' ? teardownOwner.runtimeEnvironmentId : null
       // Only renderer-bound ids emit pane exit callbacks; raw RPC handles never enter this guard.
-      const exitGuardPtyIds = rendererShutdownPtyIds
+      // Why the split tabs' panes too: this copy's host-wide stop exits them before the batch's
+      // last copy stops their tab, so their exits must wait for a commit like the rest.
+      const exitGuardPtyIds =
+        twinScope && unattributedTabs === 'skip'
+          ? sortedUniquePtyIds([...rendererShutdownPtyIds, ...twinScope.mixedTabPtyIds])
+          : rendererShutdownPtyIds
       const sleepingAgentSessionRecords = keepIdentifiers
         ? collectSleepingAgentSessionRecordsForWorktree(get(), worktreeId, {
             paneKeys: sleepingPaneKeys,

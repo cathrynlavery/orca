@@ -110,16 +110,29 @@ export type HostTwinPurgeScopes = {
 /** Every host that publishes this workspace id, by the listing's host matching. */
 export function listWorkspacePublisherHostIds(s: AppState, workspaceId: string): ExecutionHostId[] {
   const hosts = resolvePurgedPublishers(s, workspaceId, new Set()).survivors
-  if (hosts.length < 2 || parseWorkspaceKey(workspaceId)?.type === 'folder') {
+  const scope = parseWorkspaceKey(workspaceId)
+  if (!hosts.includes(LOCAL_EXECUTION_HOST_ID) || hosts.length < 2 || scope?.type === 'folder') {
     return hosts
   }
-  // Why: an unstamped legacy row read as local may be the one stamped host's row, not a twin.
+  const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceId
+  const repoId = getRepoIdFromWorktreeId(worktreeId)
   const stamped = hosts.filter((hostId) => hostId !== LOCAL_EXECUTION_HOST_ID)
-  const legacyIsStampedHost = stamped.some(
-    (hostId) =>
-      resolvePurgedPublishers(s, workspaceId, new Set([hostId])).survivors.length < hosts.length - 1
+  // Why per row: local publishes only through a row stamped local, or an unstamped legacy row
+  // the listing would not give to one of the stamped hosts.
+  const localPublishes = [
+    ...(s.worktreesByRepo?.[repoId] ?? []),
+    ...(s.detectedWorktreesByRepo?.[repoId]?.worktrees ?? [])
+  ].some(
+    (row) =>
+      row.id === worktreeId &&
+      (row.hostId === LOCAL_EXECUTION_HOST_ID ||
+        (!row.hostId &&
+          !row.runtimeOwnerEnvironmentId &&
+          !stamped.some((hostId) =>
+            worktreeMatchesHost(row, hostId, worktreeHostMatchOptions(s, repoId, hostId))
+          )))
   )
-  return legacyIsStampedHost ? hosts.filter((hostId) => hostId !== LOCAL_EXECUTION_HOST_ID) : hosts
+  return localPublishes ? hosts : stamped
 }
 
 /** Host targets whose id a host outside the purge still publishes. A raw id for the same id wins. */
