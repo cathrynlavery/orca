@@ -140,6 +140,19 @@ export function paneKeysForTabs(state: AppState, tabIds: ReadonlySet<string>): s
   return [...keys]
 }
 
+/** Pane keys of the leaves bound to these PTYs, across the workspace's terminal tabs. */
+export function splitTabPaneKeys(
+  state: AppState,
+  worktreeId: string,
+  ptyIds: ReadonlySet<string>
+): string[] {
+  return (state.tabsByWorktree[worktreeId] ?? []).flatMap((tab) =>
+    Object.entries(state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {}).flatMap(
+      ([leafId, ptyId]) => (ptyIds.has(ptyId) ? [`${tab.id}:${leafId}`] : [])
+    )
+  )
+}
+
 /**
  * Null for a raw id or when no other host publishes the id: the caller acts on the whole worktree
  * as before. Otherwise only the tabs attributed to the target host, by #29954's attribution.

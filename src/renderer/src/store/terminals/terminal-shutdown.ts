@@ -14,6 +14,7 @@ import { resolveTerminalTeardownOwner } from './terminal-teardown-owner'
 import {
   paneKeysForTabs,
   resolveHostTwinTeardownOwner,
+  splitTabPaneKeys,
   resolveHostTwinTerminalScope,
   worktreeIdOfTarget
 } from './host-twin-terminal-scope'
@@ -98,9 +99,14 @@ export function createTerminalShutdownActions(
         twinScope && unattributedTabs === 'skip' && runtimeEnvironmentId
           ? sortedUniquePtyIds([...rendererShutdownPtyIds, ...twinScope.mixedTabPtyIds])
           : rendererShutdownPtyIds
+      // Why: those panes' exits drop their live agent rows, so capture their resume records now.
+      const guardedSplitPaneKeys =
+        exitGuardPtyIds === rendererShutdownPtyIds || !twinScope
+          ? []
+          : splitTabPaneKeys(get(), worktreeId, twinScope.mixedTabPtyIds)
       const sleepingAgentSessionRecords = keepIdentifiers
         ? collectSleepingAgentSessionRecordsForWorktree(get(), worktreeId, {
-            paneKeys: sleepingPaneKeys,
+            paneKeys: sleepingPaneKeys && [...sleepingPaneKeys, ...guardedSplitPaneKeys],
             ...(shutdownReason === 'manual-sleep' ? { captureMode: 'manual-worktree-sleep' } : {}),
             ...(shutdownReason === 'auto-hibernate-completed-agent'
               ? { captureMode: 'completed-agent-hibernation' }

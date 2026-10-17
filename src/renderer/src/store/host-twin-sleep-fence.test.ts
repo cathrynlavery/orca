@@ -543,4 +543,56 @@ describe('per-tab sleep fences of a twin', () => {
     expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
   })
+
+  it("captures a split tab's runtime agent before the runtime copy's stop exits it", async () => {
+    const f = twin('local+runtime')
+    const splitPty = toRemoteRuntimePtyId('handle-split', TWIN_RUNTIME_ENV)
+    const paneKey = `${f.local.terminalTabId}:leaf-2`
+    f.store.setState((s) => ({
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, [f.local.terminalTabId]: [f.local.ptyId, splitPty] },
+      terminalLayoutsByTabId: {
+        ...s.terminalLayoutsByTabId,
+        [f.local.terminalTabId]: {
+          ...s.terminalLayoutsByTabId[f.local.terminalTabId],
+          ptyIdsByLeafId: { 'leaf-1': f.local.ptyId, 'leaf-2': splitPty }
+        }
+      },
+      unifiedTabsByWorktree: {
+        [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+          tab.id === f.local.terminalTabId ? { ...tab, executionHostId: undefined } : tab
+        )
+      },
+      sleepingAgentSessionsByPaneKey: {},
+      agentStatusByPaneKey: {
+        [paneKey]: {
+          state: 'working',
+          prompt: 'p',
+          updatedAt: 1,
+          stateStartedAt: 1,
+          paneKey,
+          stateHistory: [],
+          agentType: 'claude',
+          worktreeId: f.workspaceKey,
+          providerSession: { key: 'session_id', id: 'session-split' }
+        }
+      }
+    }))
+
+    // The runtime's stop exits the pane, whose exit drops its live agent row.
+    runtimeCall.mockImplementation((args: RuntimeEnvironmentCallRequest) => {
+      if (args.method === 'terminal.sleep') {
+        f.store.setState({ agentStatusByPaneKey: {} })
+      }
+      return answerLikeHost(args)
+    })
+
+    await sleepWorktreesReportingFailures([
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }),
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.local })
+    ])
+
+    expect(f.store.getState().sleepingAgentSessionsByPaneKey[paneKey]?.origin).toBe(
+      'worktree-sleep'
+    )
+  })
 })
