@@ -595,4 +595,17 @@ describe('per-tab sleep fences of a twin', () => {
       'worktree-sleep'
     )
   })
+
+  it('opening a copy during a repeated raw-id sleep wakes it once teardown ends', async () => {
+    const f = twin('local+runtime')
+    await sleepWorktreesReportingFailures([f.workspaceKey])
+    shutdownBrowsers.mockImplementation(async () => {
+      f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+    })
+
+    await sleepWorktreesReportingFailures([f.workspaceKey])
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+  })
 })

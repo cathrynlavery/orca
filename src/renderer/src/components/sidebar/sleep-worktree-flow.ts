@@ -3,6 +3,7 @@ import { useAppStore } from '@/store'
 import {
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
+  hasCopySleepFences,
   hasTabSleepFence,
   markCopySleepIntent,
   markWorktreeSleepIntent,
@@ -303,7 +304,7 @@ export async function sleepWorktreesReportingFailures(
           if (
             !copyOnly &&
             !plan.everyCopy &&
-            newlyFencedByPlan.has(plan) &&
+            hasCopySleepFences(worktreeId) &&
             now.activeWorkspaceExecutionHostId
           ) {
             // Why replay: a raw-id sleep fenced every copy, and only the selected one woke.
