@@ -145,7 +145,8 @@ export function createRepoRemovalActions(
           await stopRuntimeProjectTerminalsBeforeRemoval(
             target.environmentId,
             projectId,
-            knownWorktreeIds
+            // Why re-read: the registration await can let a listing refresh add worktrees.
+            getKnownRepoWorktreeIds(get(), projectId, ownerHostId)
           )
         }
         try {
