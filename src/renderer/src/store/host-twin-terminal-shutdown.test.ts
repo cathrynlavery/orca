@@ -248,4 +248,38 @@ describe('kill and sleep on one host of a twin', () => {
     expect(generation(f.remote.terminalTabId)).toBe(before + 1)
     expect(generation(f.local.terminalTabId)).toBe(0)
   })
+
+  it('refuses when a live tab names no host', async () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      tabsByWorktree: {
+        [f.workspaceKey]: [
+          ...(s.tabsByWorktree[f.workspaceKey] ?? []),
+          { ...(s.tabsByWorktree[f.workspaceKey] ?? [])[0]!, id: 'tab-unstamped', ptyId: 'pty-x' }
+        ]
+      },
+      ptyIdsByTabId: { ...s.ptyIdsByTabId, 'tab-unstamped': ['pty-x'] }
+    }))
+
+    await expect(
+      f.store
+        .getState()
+        .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.local }))
+    ).rejects.toThrow('ambiguous_terminal_owner')
+    expect(ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('stops each copy on its own host when the batch names both', async () => {
+    const f = twin('local+runtime')
+
+    await sleepWorktreesReportingFailures([
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.local }),
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })
+    ])
+
+    expect(killedPtyIds()).toContain(f.local.ptyId)
+    const sleeps = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.sleep')
+    expect(sleeps.map(([args]) => args.selector)).toEqual([TWIN_RUNTIME_ENV])
+    expect(shutdownBrowsers).toHaveBeenCalledTimes(1)
+  })
 })

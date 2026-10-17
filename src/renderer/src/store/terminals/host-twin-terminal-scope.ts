@@ -19,6 +19,8 @@ export type HostTwinTerminalScope = {
   runtimeEnvironmentId: string | null
   /** Target-host panes inside tabs another host's pane shares; their teardown is refused. */
   mixedTabPtyIds: ReadonlySet<string>
+  /** Live tabs no host can be shown to own; their teardown is refused too. */
+  unattributedLiveTabIds: ReadonlySet<string>
 }
 
 function paneKeysForTabs(state: AppState, tabIds: ReadonlySet<string>): string[] {
@@ -63,6 +65,28 @@ export function resolveHostTwinTerminalScope(
   )
   const requested = parseExecutionHostId(target.hostId)
   const row = findKnownWorktreeById(state, target.worktreeId, target.hostId)
+  const survivors = twinHostIds.get(target.worktreeId) ?? []
+  const survivorTabIds = new Set(
+    survivors.flatMap((survivor) => [
+      ...collectRemovedHostTwinState(
+        state,
+        new Set([target.worktreeId]),
+        survivor,
+        new Map([[target.worktreeId, [hostId, ...survivors.filter((other) => other !== survivor)]]])
+      ).terminalTabIds
+    ])
+  )
+  // Why: a live tab no host can claim may be the target's, so stopping the rest is not a sleep.
+  const unattributedLiveTabIds = new Set(
+    (state.tabsByWorktree[target.worktreeId] ?? [])
+      .filter(
+        (tab) =>
+          (state.ptyIdsByTabId[tab.id]?.length ?? 0) > 0 &&
+          !terminalTabIds.has(tab.id) &&
+          !survivorTabIds.has(tab.id)
+      )
+      .map((tab) => tab.id)
+  )
   return {
     hostId,
     tabIds: terminalTabIds,
@@ -71,7 +95,8 @@ export function resolveHostTwinTerminalScope(
       requested?.kind === 'runtime'
         ? requested.environmentId
         : (row?.runtimeOwnerEnvironmentId?.trim() ?? null) || null,
-    mixedTabPtyIds
+    mixedTabPtyIds,
+    unattributedLiveTabIds
   }
 }
 
@@ -85,7 +110,10 @@ export function resolveHostTwinTeardownOwner(
   backendOwnsPtyTeardown: boolean
 ): TerminalTeardownOwner {
   // Why: a split tab shared with the twin can't lose only some panes here, so nothing is stopped.
-  if (scope.mixedTabPtyIds.size > 0 && !backendOwnsPtyTeardown) {
+  if (
+    (scope.mixedTabPtyIds.size > 0 || scope.unattributedLiveTabIds.size > 0) &&
+    !backendOwnsPtyTeardown
+  ) {
     return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
   }
   if (scope.runtimeEnvironmentId || !ptyIds.some(isRemoteRuntimePtyId)) {
@@ -99,13 +127,14 @@ export function worktreeIdOfTarget(target: string | HostWorktreeTarget): string 
 }
 
 /**
- * A batch that names every host publishing an id leaves no copy awake, so those targets become
- * one raw id and the whole worktree, shared state included, is acted on as before.
+ * Ids a batch names on every host that publishes them: no copy stays awake, so the shared
+ * raw-id state (sleep marker, browsers, VM) is handled once, while each copy's terminals still
+ * stop on their own host.
  */
-export function collapseFullyTargetedTwins(
+export function collectFullyTargetedTwinIds(
   state: AppState,
   targets: readonly (string | HostWorktreeTarget)[]
-): (string | HostWorktreeTarget)[] {
+): Set<string> {
   const hostTargetsById = new Map<string, HostWorktreeTarget[]>()
   for (const target of targets) {
     if (typeof target !== 'string') {
@@ -115,7 +144,7 @@ export function collapseFullyTargetedTwins(
       ])
     }
   }
-  const collapsedIds = new Set(
+  return new Set(
     [...hostTargetsById]
       .filter(
         ([, group]) =>
@@ -125,16 +154,4 @@ export function collapseFullyTargetedTwins(
       )
       .map(([id]) => id)
   )
-  const emitted = new Set<string>()
-  return targets.flatMap((target) => {
-    const id = worktreeIdOfTarget(target)
-    if (!collapsedIds.has(id)) {
-      return [target]
-    }
-    if (emitted.has(id)) {
-      return []
-    }
-    emitted.add(id)
-    return [id]
-  })
 }

@@ -11,7 +11,7 @@ import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedSc
 import { translate } from '@/i18n/i18n'
 import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualified-identity'
 import {
-  collapseFullyTargetedTwins,
+  collectFullyTargetedTwinIds,
   resolveHostTwinTerminalScope,
   worktreeIdOfTarget
 } from '@/store/terminals/host-twin-terminal-scope'
@@ -171,9 +171,9 @@ export type WorktreeSleepOutcome = { failedWorktreeIds: string[]; errors: string
 
 /** The sleep without the toast, for callers that report failures themselves. */
 export async function sleepWorktreesReportingFailures(
-  requestedTargets: readonly SleepWorktreeTarget[]
+  targets: readonly SleepWorktreeTarget[]
 ): Promise<WorktreeSleepOutcome> {
-  if (requestedTargets.length === 0) {
+  if (targets.length === 0) {
     return { failedWorktreeIds: [], errors: [] }
   }
   const {
@@ -183,14 +183,17 @@ export async function sleepWorktreesReportingFailures(
     shutdownWorktreeBrowsers,
     shutdownWorktreeTerminals
   } = useAppStore.getState()
-  const targets = collapseFullyTargetedTwins(useAppStore.getState(), requestedTargets)
+  const fullyTargetedIds = collectFullyTargetedTwinIds(useAppStore.getState(), targets)
+  const sharedStateHandled = new Set<string>()
   // Why: the sleep-intent marker, browsers and VM suspension are keyed by the raw id, so while
   // another host's copy stays awake they belong to it too. Only that host's terminals sleep, and
   // they are fenced per tab: the shared marker would hold the awake copy's pane connects, and
   // that copy's next bind would clear it and re-arm the slept copy's panes.
   const twinTabIds = new Map<SleepWorktreeTarget, ReadonlySet<string>>()
   for (const target of targets) {
-    const scope = resolveHostTwinTerminalScope(useAppStore.getState(), target)
+    const scope = fullyTargetedIds.has(worktreeIdOfTarget(target))
+      ? null
+      : resolveHostTwinTerminalScope(useAppStore.getState(), target)
     if (scope) {
       twinTabIds.set(target, scope.tabIds)
     }
@@ -225,6 +228,9 @@ export async function sleepWorktreesReportingFailures(
       // Why: the marker outlives teardown so the panes left mounted stay cold
       // until an explicit wake (#10205); mark per workspace so an earlier
       // slow teardown never leaves a later, still-awake one marked.
+      // Why once: a batch naming every copy of a twin shares one raw-id browser registry and VM.
+      const ownsSharedState = !twin && !sharedStateHandled.has(worktreeId)
+      sharedStateHandled.add(worktreeId)
       if (twin) {
         markTabSleepIntent(twinTabIds.get(target) ?? [])
       } else {
@@ -236,7 +242,7 @@ export async function sleepWorktreesReportingFailures(
         // other teardown runs, terminals second so the PTY kill uses the same
         // ordering on both paths. Without the browser thunk here, sleep leaks
         // browserPagesByWorkspace entries and live webviews for the slept worktree.
-        if (!twin) {
+        if (ownsSharedState) {
           await withWorktreeSleepTeardown(worktreeId, () => shutdownWorktreeBrowsers(worktreeId))
         }
       } catch (err) {
@@ -256,7 +262,11 @@ export async function sleepWorktreesReportingFailures(
         // scrollback. See DESIGN_DOC_TERMINAL_HISTORY_FIX_V2.md §3.3.c.
         await withWorktreeSleepTeardown(worktreeId, async () => {
           await shutdownWorktreeTerminals(target, { keepIdentifiers: true })
-          if (!twin && typeof window !== 'undefined' && window.api?.ephemeralVm?.suspendWorkspace) {
+          if (
+            ownsSharedState &&
+            typeof window !== 'undefined' &&
+            window.api?.ephemeralVm?.suspendWorkspace
+          ) {
             await window.api.ephemeralVm.suspendWorkspace({ workspaceId: worktreeId })
           }
         })
