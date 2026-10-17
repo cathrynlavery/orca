@@ -56,7 +56,6 @@ src/renderer/src/lib/worktree-sort-order-host-split.ts
 src/renderer/src/store/slices/browser/browser-page-conversion-actions.ts
 src/renderer/src/store/slices/browser/browser-tab-actions.ts
 src/renderer/src/store/slices/tabs/tabs-host-mirroring.ts
-src/renderer/src/store/slices/terminal-tab-retirement.ts
 src/renderer/src/store/terminals/terminal-active-workspace-creation.ts
 src/renderer/src/store/terminals/terminal-pane-hibernation.ts
 src/renderer/src/store/terminals/terminal-shutdown.ts
