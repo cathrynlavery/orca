@@ -55,10 +55,12 @@ export function closeRemovedHostTwinState(
     ...Object.values(state.tabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.id)),
     ...Object.values(state.unifiedTabsByWorktree).flatMap((tabs) => tabs.map((tab) => tab.entityId))
   ])
-  for (const { hostId, removed } of twins.byHost) {
+  // Why pre-call hosts too: a concurrent removal of the other copy can leave no twin to rescan.
+  for (const hostId of new Set([...twins.byHost, ...preCall.byHost].map((entry) => entry.hostId))) {
+    const removed = twins.byHost.find((entry) => entry.hostId === hostId)?.removed
     // Why: a host frame during the call can drop a tab without closeTab's agent and cache cleanup.
     const terminalTabIds = new Set([
-      ...removed.terminalTabIds,
+      ...(removed?.terminalTabIds ?? []),
       ...preCall.byHost
         .filter((entry) => entry.hostId === hostId)
         .flatMap((entry) => [...entry.removed.terminalTabIds])
@@ -103,7 +105,7 @@ export function closeRemovedHostTwinState(
       })
     }
     // Why: the tab stays for its surviving pane, but this host's shell in it must not outlive the project.
-    for (const ptyId of remoteCloseOwnedByHost ? [] : removed.mixedTabPtyIds) {
+    for (const ptyId of remoteCloseOwnedByHost ? [] : (removed?.mixedTabPtyIds ?? [])) {
       if (!killedPtyIds.has(ptyId) && !isRemoteRuntimePtyId(ptyId)) {
         window.api.pty.kill(ptyId)
       }
@@ -125,16 +127,16 @@ export function closeRemovedHostTwinState(
           twins.twinHostIds.get(worktreeId) ?? []
         )(launchHostId) === hostId
     )
-    for (const fileId of removed.fileIds) {
+    for (const fileId of removed?.fileIds ?? []) {
       // Why: a file a listing refresh already dropped would make closeFile reset the focused surface.
       if (get().openFiles.some((file) => file.id === fileId)) {
         get().closeFile(fileId, { captureRecentlyClosed: false })
       }
     }
-    for (const browserTabId of removed.browserTabIds) {
+    for (const browserTabId of removed?.browserTabIds ?? []) {
       get().closeBrowserTab(browserTabId, { reason: 'cleanup' })
     }
-    for (const tabId of removed.otherTabIds) {
+    for (const tabId of removed?.otherTabIds ?? []) {
       get().closeUnifiedTab(tabId, { preserveWorktreeSelection: true })
     }
   }

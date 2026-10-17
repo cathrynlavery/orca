@@ -612,6 +612,33 @@ describe('removing a remote project keeps its local twin', () => {
     expect(Object.keys(store.getState().agentStatusByPaneKey)).toEqual(['tab-local:leaf'])
   })
 
+  it('retires a dropped removed-host tab when the other copy also went during the call', async () => {
+    const store = seedTwins()
+    // The other copy's removal and a host frame both land while this call is pending.
+    onRepoRemoved = () =>
+      store.setState((s) => ({
+        worktreesByRepo: {
+          [PROJECT_ID]: (s.worktreesByRepo[PROJECT_ID] ?? []).filter(
+            (row) => row.hostId !== LOCAL_HOST
+          )
+        },
+        tabsByWorktree: {
+          [WORKTREE_ID]: (s.tabsByWorktree[WORKTREE_ID] ?? []).filter(
+            (tab) => tab.id !== 'tab-remote'
+          )
+        },
+        unifiedTabsByWorktree: {
+          [WORKTREE_ID]: (s.unifiedTabsByWorktree[WORKTREE_ID] ?? []).filter(
+            (tab) => tab.id !== 'tab-remote'
+          )
+        }
+      }))
+
+    await store.getState().removeProject(PROJECT_ID, { hostId: REMOTE_HOST })
+
+    expect(store.getState().ptyIdsByTabId['tab-remote']).toBeUndefined()
+  })
+
   it('leaves the selection unchanged on a single-host removal', async () => {
     const store = createTestStore()
     const otherKey = worktreeWorkspaceKey('other-repo::/work/other')
