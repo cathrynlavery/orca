@@ -300,11 +300,21 @@ export async function sleepWorktreesReportingFailures(
         } else if (
           planIsSelectedCopy(now, plan, now.activeWorktreeId, now.activeWorkspaceExecutionHostId)
         ) {
-          if (newlyFencedByPlan.has(plan)) {
-            clearTabSleepIntent(worktreeId, newlyFencedByPlan.get(plan) ?? [])
-          }
-          if (!copyOnly) {
-            clearWorktreeSleepIntent(worktreeId)
+          if (
+            !copyOnly &&
+            !plan.everyCopy &&
+            newlyFencedByPlan.has(plan) &&
+            now.activeWorkspaceExecutionHostId
+          ) {
+            // Why replay: a raw-id sleep fenced every copy, and only the selected one woke.
+            now.setActiveWorktree(worktreeId, now.activeWorkspaceExecutionHostId)
+          } else {
+            if (newlyFencedByPlan.has(plan)) {
+              clearTabSleepIntent(worktreeId, newlyFencedByPlan.get(plan) ?? [])
+            }
+            if (!copyOnly) {
+              clearWorktreeSleepIntent(worktreeId)
+            }
           }
         }
       } catch (err) {

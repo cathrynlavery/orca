@@ -529,4 +529,18 @@ describe('per-tab sleep fences of a twin', () => {
     expect(f.store.getState().suppressedPtyExitIds[f.local.ptyId]).toBeUndefined()
     expect(f.store.getState().isPtyShutdownPending(f.local.ptyId)).toBe(false)
   })
+
+  it('opening one copy during a raw-id sleep leaves the other copy fenced', async () => {
+    const f = twin()
+    ptyKill.mockImplementation((ptyId: string) => {
+      if (ptyId === f.local.ptyId) {
+        f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+      }
+    })
+
+    await sleepWorktreesReportingFailures([f.workspaceKey])
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+  })
 })
