@@ -5,7 +5,11 @@ import {
   type RuntimeEnvironmentCallRequest
 } from '../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../runtime/runtime-rpc-client'
-import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import {
+  clearWorktreeSleepIntent,
+  hasPaneSleepIntent,
+  hasWorktreeSleepIntent
+} from '@/lib/worktree-sleep-intent'
 import { resetHostTwinModuleStores } from './host-twin-state-projection.test-fixture'
 import {
   createHostTwinFixture,
@@ -66,6 +70,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     api: {
       pty: { kill: ptyKill },
+      gh: { enqueuePRRefresh: vi.fn().mockResolvedValue(undefined) },
       runtimeEnvironments: { call: runtimeCall, list: vi.fn().mockResolvedValue([]) },
       ui: { set: vi.fn().mockResolvedValue(undefined) }
     }
@@ -147,5 +152,57 @@ describe('kill and sleep on one host of a twin', () => {
 
     expect(killedPtyIds().sort()).toEqual([f.local.ptyId, f.remote.ptyId].sort())
     expect(shutdownBrowsers).toHaveBeenCalledWith(f.workspaceKey)
+  })
+
+  it("fences only the slept copy's tabs, and wakes them with that copy", async () => {
+    const f = twin()
+    clearWorktreeSleepIntent(f.workspaceKey)
+
+    await sleepWorktreesReportingFailures([hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })])
+
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(false)
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.local.hostId)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(true)
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
+  })
+
+  it("stops a paired runtime's SSH copy on that runtime", async () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      worktreesByRepo: {
+        [f.projectId]: (s.worktreesByRepo[f.projectId] ?? []).map((row) =>
+          row.hostId === f.remote.hostId
+            ? { ...row, runtimeOwnerEnvironmentId: TWIN_RUNTIME_ENV }
+            : row
+        )
+      }
+    }))
+
+    await f.store
+      .getState()
+      .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }))
+
+    const stops = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.stop')
+    expect(stops.map(([args]) => args.selector)).toEqual([TWIN_RUNTIME_ENV])
+    expect(killedPtyIds()).not.toContain(f.local.ptyId)
+  })
+
+  it('refuses when a split tab mixes the target host with its twin', async () => {
+    const f = twin()
+    f.store.setState((s) => ({
+      ptyIdsByTabId: {
+        ...s.ptyIdsByTabId,
+        [f.local.terminalTabId]: [f.local.ptyId, f.remote.ptyId]
+      }
+    }))
+
+    await expect(
+      f.store
+        .getState()
+        .shutdownWorktreeTerminals(hostWorktreeTarget({ id: f.workspaceKey, ...f.remote }))
+    ).rejects.toThrow('ambiguous_terminal_owner')
+    expect(ptyKill).not.toHaveBeenCalled()
   })
 })

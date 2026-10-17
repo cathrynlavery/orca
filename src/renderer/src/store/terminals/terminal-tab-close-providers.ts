@@ -25,15 +25,15 @@ export function startTerminalTabProviderRetirement({
   tabId: string
   canRetireRuntimeTerminal?: () => boolean
 }): void {
-  // Why teardown: a legacy remote id names no runtime, and a focused-server guess could close
-  // another host's terminal; an unresolved owner skips the close instead.
+  // Why teardown and runtime-only: a legacy remote id names no runtime, and neither the focused
+  // server nor this machine's own runtime is proven to hold it, so its close is skipped instead.
   const fallbackOwnership = retirementPlan.worktreeId
     ? resolveTerminalHostOwnership(state, retirementPlan.worktreeId, 'teardown')
     : null
   const fallbackWorktreeRoute =
-    fallbackOwnership?.kind === 'unresolved'
-      ? null
-      : { runtimeEnvironmentId: fallbackOwnership?.runtimeEnvironmentId ?? null }
+    fallbackOwnership?.kind === 'runtime'
+      ? { runtimeEnvironmentId: fallbackOwnership.runtimeEnvironmentId }
+      : null
   const retirementTasks: Promise<unknown>[] = localPtyTeardownOwnedExternally
     ? []
     : retirementPlan.localOrSshPtyIds.map(async (ptyId) => window.api.pty.kill(ptyId))

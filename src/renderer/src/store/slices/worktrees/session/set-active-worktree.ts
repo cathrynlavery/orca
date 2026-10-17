@@ -17,7 +17,9 @@ import {
 } from '../../../../../../shared/workspace-scope'
 import { findKnownWorktreeById } from '../listing/detected-worktree-meta'
 import { resolveActivatedWorktreeSurface } from './active-worktree-surface'
-import { clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import { clearTabSleepIntent, clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import { hostWorktreeTarget } from '../../../../../../shared/worktree/host-qualified-identity'
+import { resolveHostTwinTerminalScope } from '../../../terminals/host-twin-terminal-scope'
 import {
   pendingActivationTerminalPrepCancels,
   shouldDeferActivationTerminalPrep
@@ -167,6 +169,19 @@ export function createSetActiveWorktree(
     // Cleared after the set() above so a pane still waiting on the marker connects once,
     // in the remounted generation, instead of connecting and then being remounted.
     clearWorktreeSleepIntent(worktreeId)
+    if (worktreeId) {
+      // Why: activating one host's copy of a twin wakes only that copy's fenced tabs.
+      const twinScope = executionHostId
+        ? resolveHostTwinTerminalScope(
+            get(),
+            hostWorktreeTarget({ id: worktreeId, hostId: executionHostId })
+          )
+        : null
+      clearTabSleepIntent(
+        worktreeId,
+        twinScope?.tabIds ?? (get().tabsByWorktree[worktreeId] ?? []).map((tab) => tab.id)
+      )
+    }
 
     if (worktreeId && shouldPrepareTerminalTabs) {
       const prepareTerminalTabs = (): void => {

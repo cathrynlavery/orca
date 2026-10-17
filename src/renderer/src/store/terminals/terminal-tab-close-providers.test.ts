@@ -26,7 +26,7 @@ afterEach(() => {
 })
 
 describe('provider retirement of a legacy runtime terminal', () => {
-  it('does not send an unowned close to the focused server', () => {
+  it('skips an unowned close instead of guessing a host', () => {
     const store = createTestStore()
     const workspaceKey = folderWorkspaceKey('folder-1')
     store.setState(() => ({
@@ -50,10 +50,7 @@ describe('provider retirement of a legacy runtime terminal', () => {
       tabId: 'tab-1'
     })
 
-    expect(callRuntimeRpc).not.toHaveBeenCalledWith(
-      { kind: 'environment', environmentId: 'env-focused' },
-      expect.anything(),
-      expect.anything()
-    )
+    // Neither the focused server nor this machine's runtime is proven to hold the handle.
+    expect(callRuntimeRpc).not.toHaveBeenCalled()
   })
 })

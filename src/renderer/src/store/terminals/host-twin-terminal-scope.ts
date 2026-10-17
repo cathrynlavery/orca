@@ -4,6 +4,7 @@ import type { HostWorktreeTarget } from '../../../../shared/worktree/host-qualif
 import { normalizeWorktreePurgeTarget } from '../slices/worktree-purge-target'
 import { collectHostTwinPurgeScopes } from '../slices/worktrees/teardown/host-twin-worktree-purge'
 import { collectRemovedHostTwinState } from '../repos/repo-removal-host-twin-attribution'
+import { findKnownWorktreeById } from '../slices/worktrees/listing/detected-worktree-meta'
 import { isRemoteRuntimePtyId } from '../../../../shared/remote-runtime-pty-id'
 import { resolveTerminalTeardownOwner, type TerminalTeardownOwner } from './terminal-teardown-owner'
 
@@ -14,8 +15,10 @@ export type HostTwinTerminalScope = {
   tabIds: ReadonlySet<string>
   /** Pane keys under those tabs in any agent map, so per-pane records stay with their host. */
   paneKeys: string[]
-  /** The runtime the target names, which stops its own copy; null for local and SSH. */
+  /** The runtime that stops this copy: the one the target names, or the one its SSH row runs on. */
   runtimeEnvironmentId: string | null
+  /** Target-host panes inside tabs another host's pane shares; their teardown is refused. */
+  mixedTabPtyIds: ReadonlySet<string>
 }
 
 function paneKeysForTabs(state: AppState, tabIds: ReadonlySet<string>): string[] {
@@ -52,18 +55,23 @@ export function resolveHostTwinTerminalScope(
     return null
   }
   const [hostId, twinHostIds] = scope
-  const { terminalTabIds } = collectRemovedHostTwinState(
+  const { terminalTabIds, mixedTabPtyIds } = collectRemovedHostTwinState(
     state,
     new Set([target.worktreeId]),
     hostId,
     twinHostIds
   )
   const requested = parseExecutionHostId(target.hostId)
+  const row = findKnownWorktreeById(state, target.worktreeId, target.hostId)
   return {
     hostId,
     tabIds: terminalTabIds,
     paneKeys: paneKeysForTabs(state, terminalTabIds),
-    runtimeEnvironmentId: requested?.kind === 'runtime' ? requested.environmentId : null
+    runtimeEnvironmentId:
+      requested?.kind === 'runtime'
+        ? requested.environmentId
+        : (row?.runtimeOwnerEnvironmentId?.trim() ?? null) || null,
+    mixedTabPtyIds
   }
 }
 
@@ -73,8 +81,13 @@ export function resolveHostTwinTerminalScope(
  */
 export function resolveHostTwinTeardownOwner(
   scope: HostTwinTerminalScope,
-  ptyIds: readonly string[]
+  ptyIds: readonly string[],
+  backendOwnsPtyTeardown: boolean
 ): TerminalTeardownOwner {
+  // Why: a split tab shared with the twin can't lose only some panes here, so nothing is stopped.
+  if (scope.mixedTabPtyIds.size > 0 && !backendOwnsPtyTeardown) {
+    return { kind: 'refused', reason: 'ambiguous_terminal_owner' }
+  }
   if (scope.runtimeEnvironmentId || !ptyIds.some(isRemoteRuntimePtyId)) {
     return { kind: 'resolved', runtimeEnvironmentId: scope.runtimeEnvironmentId }
   }

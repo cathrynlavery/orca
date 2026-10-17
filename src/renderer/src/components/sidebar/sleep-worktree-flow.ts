@@ -1,7 +1,9 @@
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import {
+  clearTabSleepIntent,
   clearWorktreeSleepIntent,
+  markTabSleepIntent,
   markWorktreeSleepIntent,
   withWorktreeSleepTeardown
 } from '@/lib/worktree-sleep-intent'
@@ -182,11 +184,16 @@ export async function sleepWorktreesReportingFailures(
   } = useAppStore.getState()
   // Why: the sleep-intent marker, browsers and VM suspension are keyed by the raw id, so while
   // another host's copy stays awake they belong to it too. Only that host's terminals sleep, and
-  // the marker is left alone: set, it would hold the awake copy's pane connects, and that copy's
-  // next bind would clear it and re-arm the slept copy's panes anyway.
-  const twinTargets = new Set(
-    targets.filter((target) => resolveHostTwinTerminalScope(useAppStore.getState(), target))
-  )
+  // they are fenced per tab: the shared marker would hold the awake copy's pane connects, and
+  // that copy's next bind would clear it and re-arm the slept copy's panes.
+  const twinTabIds = new Map<SleepWorktreeTarget, ReadonlySet<string>>()
+  for (const target of targets) {
+    const scope = resolveHostTwinTerminalScope(useAppStore.getState(), target)
+    if (scope) {
+      twinTabIds.set(target, scope.tabIds)
+    }
+  }
+  const twinTargets = new Set(twinTabIds.keys())
   const sleptActiveTarget = targets.find(
     (target) =>
       worktreeIdOfTarget(target) === activeWorktreeId &&
@@ -216,7 +223,9 @@ export async function sleepWorktreesReportingFailures(
       // Why: the marker outlives teardown so the panes left mounted stay cold
       // until an explicit wake (#10205); mark per workspace so an earlier
       // slow teardown never leaves a later, still-awake one marked.
-      if (!twin) {
+      if (twin) {
+        markTabSleepIntent(twinTabIds.get(target) ?? [])
+      } else {
         markWorktreeSleepIntent(worktreeId)
       }
       try {
@@ -250,8 +259,17 @@ export async function sleepWorktreesReportingFailures(
           }
         })
         // Why: a workspace the user activated during the batch is awake by their choice.
-        if (!twin && useAppStore.getState().activeWorktreeId === worktreeId) {
+        const { activeWorktreeId: nowActive, activeWorkspaceExecutionHostId: nowActiveHost } =
+          useAppStore.getState()
+        if (!twin && nowActive === worktreeId) {
           clearWorktreeSleepIntent(worktreeId)
+        } else if (
+          twin &&
+          typeof target !== 'string' &&
+          nowActive === worktreeId &&
+          nowActiveHost === target.hostId
+        ) {
+          clearTabSleepIntent(worktreeId, twinTabIds.get(target) ?? [])
         }
       } catch (err) {
         console.error('[sleep-worktree] terminal or host suspension failed', {
@@ -266,7 +284,10 @@ export async function sleepWorktreesReportingFailures(
   } finally {
     // Why: a failed sleep leaves the workspace awake and retryable.
     for (const target of failedTargets) {
-      if (!twinTargets.has(target)) {
+      const tabIds = twinTabIds.get(target)
+      if (tabIds) {
+        clearTabSleepIntent(worktreeIdOfTarget(target), tabIds)
+      } else {
         clearWorktreeSleepIntent(worktreeIdOfTarget(target))
       }
     }

@@ -54,7 +54,7 @@ export function createTerminalShutdownActions(
       const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
       const backendOwnsPtyTeardown = opts?.backendOwnsPtyTeardown === true
       const teardownOwner = twinScope
-        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds)
+        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds, backendOwnsPtyTeardown)
         : resolveTerminalTeardownOwner(
             resolveRuntimeOwnerForWorktree(get(), worktreeId),
             rendererShutdownPtyIds

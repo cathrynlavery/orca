@@ -67,3 +67,64 @@ export function onWorktreeSleepIntentCleared(worktreeId: string, listener: () =>
     }
   }
 }
+
+// Why: when one host's copy of a twin sleeps, the shared id stays unmarked for the awake copy,
+// so the slept copy's tabs are fenced one by one instead.
+const sleepingTabIds = new Set<string>()
+const wakeListenersByTabId = new Map<string, Set<() => void>>()
+
+export function markTabSleepIntent(tabIds: Iterable<string>): void {
+  for (const tabId of tabIds) {
+    sleepingTabIds.add(tabId)
+  }
+}
+
+/** Wakes fenced tabs; a bind during the worktree's sleep teardown is not a wake. */
+export function clearTabSleepIntent(worktreeId: string, tabIds: Iterable<string>): void {
+  if (tearingDownWorktreeIds.has(worktreeId)) {
+    return
+  }
+  for (const tabId of tabIds) {
+    if (!sleepingTabIds.delete(tabId)) {
+      continue
+    }
+    const listeners = wakeListenersByTabId.get(tabId)
+    wakeListenersByTabId.delete(tabId)
+    for (const listener of listeners ?? []) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[sleep-intent] wake listener failed', { worktreeId, error })
+      }
+    }
+  }
+}
+
+export function hasPaneSleepIntent(worktreeId: string, tabId: string): boolean {
+  return sleepingWorktreeIds.has(worktreeId) || sleepingTabIds.has(tabId)
+}
+
+/** Fires once when the worktree's or the tab's fence clears; the caller checks both again. */
+export function onPaneSleepIntentCleared(
+  worktreeId: string,
+  tabId: string,
+  listener: () => void
+): () => void {
+  const listeners = wakeListenersByTabId.get(tabId) ?? new Set<() => void>()
+  let unsubscribeWorktree = (): void => {}
+  const unsubscribe = (): void => {
+    unsubscribeWorktree()
+    listeners.delete(once)
+    if (listeners.size === 0 && wakeListenersByTabId.get(tabId) === listeners) {
+      wakeListenersByTabId.delete(tabId)
+    }
+  }
+  function once(): void {
+    unsubscribe()
+    listener()
+  }
+  unsubscribeWorktree = onWorktreeSleepIntentCleared(worktreeId, once)
+  listeners.add(once)
+  wakeListenersByTabId.set(tabId, listeners)
+  return unsubscribe
+}
