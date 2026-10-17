@@ -108,7 +108,17 @@ export type HostTwinPurgeScopes = {
 
 /** Every host that publishes this workspace id, by the listing's host matching. */
 export function listWorkspacePublisherHostIds(s: AppState, workspaceId: string): ExecutionHostId[] {
-  return resolvePurgedPublishers(s, workspaceId, new Set()).survivors
+  const hosts = resolvePurgedPublishers(s, workspaceId, new Set()).survivors
+  if (hosts.length < 2 || parseWorkspaceKey(workspaceId)?.type === 'folder') {
+    return hosts
+  }
+  // Why: an unstamped legacy row read as local may be the one stamped host's row, not a twin.
+  const stamped = hosts.filter((hostId) => hostId !== LOCAL_EXECUTION_HOST_ID)
+  const legacyIsStampedHost = stamped.some(
+    (hostId) =>
+      resolvePurgedPublishers(s, workspaceId, new Set([hostId])).survivors.length < hosts.length - 1
+  )
+  return legacyIsStampedHost ? hosts.filter((hostId) => hostId !== LOCAL_EXECUTION_HOST_ID) : hosts
 }
 
 /** Host targets whose id a host outside the purge still publishes. A raw id for the same id wins. */

@@ -13,6 +13,7 @@ import {
 } from '@/lib/worktree-sleep-intent'
 import { resetHostTwinModuleStores } from './host-twin-state-projection.test-fixture'
 import { createHostTwinFixture, type HostTwinFixture } from './host-twin.test-fixture'
+import { listWorkspacePublisherHostIds } from './slices/worktrees/teardown/host-twin-worktree-purge'
 
 const appStore = vi.hoisted((): { current: HostTwinFixture['store'] | null } => ({
   current: null
@@ -100,6 +101,39 @@ const both = (f: HostTwinFixture) => [
   hostWorktreeTarget({ id: f.workspaceKey, ...f.local }),
   hostWorktreeTarget({ id: f.workspaceKey, ...f.remote })
 ]
+
+/** A local tab with no host stamp whose second pane runs on the runtime copy. */
+function splitLocalTabAcrossCopies(f: HostTwinFixture): void {
+  const tabId = f.local.terminalTabId
+  f.store.setState((s) => ({
+    ptyIdsByTabId: { ...s.ptyIdsByTabId, [tabId]: [f.local.ptyId, f.remote.ptyId] },
+    unifiedTabsByWorktree: {
+      [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+        tab.id === tabId ? { ...tab, executionHostId: undefined } : tab
+      )
+    }
+  }))
+}
+
+/** A local tab with no host stamp split over two local panes. */
+function unstampSplitLocalTab(f: HostTwinFixture): void {
+  const tabId = f.local.terminalTabId
+  f.store.setState((s) => ({
+    ptyIdsByTabId: { ...s.ptyIdsByTabId, [tabId]: [f.local.ptyId, 'pty-local-2'] },
+    terminalLayoutsByTabId: {
+      ...s.terminalLayoutsByTabId,
+      [tabId]: {
+        ...s.terminalLayoutsByTabId[tabId],
+        ptyIdsByLeafId: { 'leaf-1': f.local.ptyId, 'leaf-2': 'pty-local-2' }
+      }
+    },
+    unifiedTabsByWorktree: {
+      [f.workspaceKey]: (s.unifiedTabsByWorktree[f.workspaceKey] ?? []).map((tab) =>
+        tab.id === tabId ? { ...tab, executionHostId: undefined } : tab
+      )
+    }
+  }))
+}
 
 describe('per-tab sleep fences of a twin', () => {
   it('reopening a slept copy clears the fence of a tab its sleep stopped attributing', async () => {
@@ -367,6 +401,56 @@ describe('per-tab sleep fences of a twin', () => {
 
     f.store.getState().closeTab(f.remote.terminalTabId, { reason: 'cleanup' })
 
+    expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
+  })
+
+  it('a batch naming both copies sleeps a split tab that spans them', async () => {
+    const f = twin('local+runtime')
+    splitLocalTabAcrossCopies(f)
+
+    const outcome = await sleepWorktreesReportingFailures(both(f))
+
+    expect(outcome.failedWorktreeIds).toEqual([])
+    expect(killedPtyIds()).toContain(f.local.ptyId)
+  })
+
+  it('a lone copy refused over a split tab says how to sleep it', async () => {
+    const f = twin('local+runtime')
+    splitLocalTabAcrossCopies(f)
+
+    const outcome = await sleepWorktreesReportingFailures([
+      hostWorktreeTarget({ id: f.workspaceKey, ...f.local })
+    ])
+
+    expect(outcome.errors).toEqual([expect.stringContaining('Sleep both copies together')])
+  })
+
+  it('a single-host worktree with a legacy unstamped row has one publisher', () => {
+    const f = twin()
+    // Only the SSH host owns the repo; its listing left an older, unstamped copy of the row.
+    f.store.setState((s) => ({
+      repos: s.repos.filter((repo) => repo.executionHostId === f.remote.hostId),
+      worktreesByRepo: {
+        [f.projectId]: (s.worktreesByRepo[f.projectId] ?? []).map((row) =>
+          row.hostId === f.local.hostId ? { ...row, hostId: undefined } : row
+        )
+      }
+    }))
+
+    expect(listWorkspacePublisherHostIds(f.store.getState(), f.workspaceKey)).toEqual([
+      f.remote.hostId
+    ])
+  })
+
+  it('opening one copy after a raw-id sleep keeps the other copy fenced', async () => {
+    const f = twin('local+runtime')
+    unstampSplitLocalTab(f)
+
+    await sleepWorktreesReportingFailures([f.workspaceKey])
+    f.store.getState().setActiveWorktree(f.workspaceKey, f.remote.hostId)
+
+    // The local tab lost the live ids that attributed it, yet it stays asleep with its copy.
+    expect(hasPaneSleepIntent(f.workspaceKey, f.local.terminalTabId)).toBe(true)
     expect(hasPaneSleepIntent(f.workspaceKey, f.remote.terminalTabId)).toBe(false)
   })
 })

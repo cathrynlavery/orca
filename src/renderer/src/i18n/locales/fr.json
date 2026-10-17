@@ -6185,6 +6185,9 @@
               "legacy": {
                 "unverified": "L'ancien runtime d'hôte n'a pas pu confirmer l'arrêt des terminaux. L'espace de travail est resté ouvert ; mettez à jour l'hôte et réessayez."
               },
+              "twin": {
+                "unattributed": "Orca couldn't tell which host runs some of this workspace's terminals, so the workspace was kept open. Sleep both copies together, or close those terminals and try again."
+              },
               "host": {
                 "unverified": "L'hôte n'a pas pu confirmer l'arrêt des terminaux. L'espace de travail est resté ouvert ; vérifiez la connexion et réessayez."
               },

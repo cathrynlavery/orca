@@ -11,7 +11,11 @@ import {
 } from '@/lib/worktree-sleep-intent'
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
 import { translate } from '@/i18n/i18n'
-import { resolveHostTwinTerminalScope } from '@/store/terminals/host-twin-terminal-scope'
+import { describeSleepFailure } from './sleep-failure-message'
+import {
+  fenceEveryTwinCopy,
+  resolveHostTwinTerminalScope
+} from '@/store/terminals/host-twin-terminal-scope'
 import {
   planIsSelectedCopy,
   planWorktreeSleep,
@@ -123,31 +127,6 @@ function preserveSidebarWorktreePosition(worktreeId: string): () => void {
   }
 }
 
-function describeSleepFailure(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error)
-  if (detail.includes('legacy')) {
-    return translate(
-      'auto.components.sidebar.sleep.worktree.flow.legacy.unverified',
-      'The older host runtime could not confirm terminal shutdown. The workspace was kept open; update the host and try again.'
-    )
-  }
-  if (
-    detail.includes('terminal_') ||
-    detail.includes('runtime') ||
-    detail.includes('connection') ||
-    detail.includes('Daemon')
-  ) {
-    return translate(
-      'auto.components.sidebar.sleep.worktree.flow.host.unverified',
-      'The host could not confirm terminal shutdown. The workspace was kept open; check the connection and try again.'
-    )
-  }
-  return translate(
-    'auto.components.sidebar.sleep.worktree.flow.retry',
-    'The workspace was kept open. Try again; if the problem continues, check the host connection.'
-  )
-}
-
 export async function runSleepWorktrees(targets: readonly SleepWorktreeTarget[]): Promise<void> {
   const { errors } = await sleepWorktreesReportingFailures(targets)
   if (errors.length > 0) {
@@ -242,6 +221,13 @@ export async function sleepWorktreesReportingFailures(
       }
       if (!copyOnly) {
         markWorktreeSleepIntent(worktreeId)
+      }
+      if (!copyOnly && !plan.everyCopy) {
+        // Why: a raw-id sleep of a twin records each copy too, so opening one wakes only it.
+        const fenced = fenceEveryTwinCopy(useAppStore.getState(), worktreeId)
+        if (fenced.length > 0) {
+          newlyFencedByPlan.set(plan, [...(newlyFencedByPlan.get(plan) ?? []), ...fenced])
+        }
       }
       try {
         // Why: sleep mirrors removeWorktree's shutdown sequence — browsers first

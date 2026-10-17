@@ -6057,6 +6057,9 @@
               "legacy": {
                 "unverified": "古いホストランタイムでは、ターミナルの終了を確認できませんでした。ワークスペースは開いたままです。ホストを更新してから、もう一度お試しください。"
               },
+              "twin": {
+                "unattributed": "Orca couldn't tell which host runs some of this workspace's terminals, so the workspace was kept open. Sleep both copies together, or close those terminals and try again."
+              },
               "host": {
                 "unverified": "ホストがターミナルの終了を確認できませんでした。ワークスペースは開いたままです。接続を確認してから、もう一度お試しください。"
               },

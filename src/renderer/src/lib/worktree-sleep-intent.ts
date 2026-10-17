@@ -75,6 +75,7 @@ const wakeListenersByTabId = new Map<string, Set<() => void>>()
 // Why recorded per copy: a copy's tabs are attributed from PTY evidence its sleep removes, so
 // opening it again clears exactly what was fenced, not a recomputation that can miss tabs.
 const fencedTabIdsByCopy = new Map<string, Set<string>>()
+const copyKeysByWorktreeId = new Map<string, Set<string>>()
 
 function copyKey(worktreeId: string, copyHostId: string): string {
   return `${copyHostId}\u0000${worktreeId}`
@@ -93,7 +94,16 @@ export function markCopySleepIntent(
   }
   if (fenced.size > 0) {
     fencedTabIdsByCopy.set(key, fenced)
+    copyKeysByWorktreeId.set(
+      worktreeId,
+      (copyKeysByWorktreeId.get(worktreeId) ?? new Set<string>()).add(key)
+    )
   }
+}
+
+/** Whether any copy of this worktree holds a recorded fence; cheap, for hot paths like binds. */
+export function hasCopySleepFences(worktreeId: string): boolean {
+  return copyKeysByWorktreeId.has(worktreeId)
 }
 
 export function getCopyFencedTabIds(worktreeId: string, copyHostId: string): string[] {
@@ -133,6 +143,12 @@ function dropFromCopyRecords(tabId: string): void {
   for (const [key, fenced] of fencedTabIdsByCopy) {
     if (fenced.delete(tabId) && fenced.size === 0) {
       fencedTabIdsByCopy.delete(key)
+      const worktreeId = key.slice(key.indexOf('\u0000') + 1)
+      const keys = copyKeysByWorktreeId.get(worktreeId)
+      keys?.delete(key)
+      if (keys?.size === 0) {
+        copyKeysByWorktreeId.delete(worktreeId)
+      }
     }
   }
 }

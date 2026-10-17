@@ -11,12 +11,10 @@ import {
   clearCopySleepIntent,
   clearTabSleepIntent,
   clearWorktreeSleepIntent,
+  hasCopySleepFences,
   hasWorktreeSleepIntent
 } from '@/lib/worktree-sleep-intent'
-import {
-  fenceTwinCopiesBeforeSharedWake,
-  resolveTwinTerminalTabHost
-} from './host-twin-terminal-scope'
+import { prepareTwinBindWake } from './host-twin-terminal-scope'
 import { omitDisownedPtyIds } from './terminal-disowned-pty-sources'
 
 export function createTerminalPtyBindingActions(
@@ -200,23 +198,20 @@ export function createTerminalPtyBindingActions(
         }
       })
       // Why: a bound PTY means the workspace is awake by any route (CLI, automation, client wake), not only activation.
-      if (worktreeId && hasWorktreeSleepIntent(worktreeId)) {
-        // Why: a bind wakes its own copy of a twin; the other copies keep a per-tab fence.
-        fenceTwinCopiesBeforeSharedWake(
-          get(),
-          worktreeId,
-          resolveTwinTerminalTabHost(get(), worktreeId, tabId),
-          [tabId]
-        )
-      }
-      clearWorktreeSleepIntent(worktreeId)
       if (worktreeId) {
+        // Why gated: a bind with no fence anywhere stays O(1); only a fenced twin is attributed.
+        const copyHostId =
+          hasWorktreeSleepIntent(worktreeId) || hasCopySleepFences(worktreeId)
+            ? prepareTwinBindWake(get(), worktreeId, tabId)
+            : null
+        clearWorktreeSleepIntent(worktreeId)
         clearTabSleepIntent(worktreeId, [tabId])
         // Why: a bound PTY wakes its whole copy, as it wakes a whole worktree without a twin.
-        const copyHostId = resolveTwinTerminalTabHost(get(), worktreeId, tabId)
         if (copyHostId) {
           clearCopySleepIntent(worktreeId, copyHostId)
         }
+      } else {
+        clearWorktreeSleepIntent(worktreeId)
       }
       // Why: activation spawns come from clicking a worktree, not work in it — skip the lastActivityAt stamp and sortEpoch bump; other spawn reasons still bump.
       if (worktreeId && !wasActivationSpawn && !isRemoteRuntimeMirror) {
