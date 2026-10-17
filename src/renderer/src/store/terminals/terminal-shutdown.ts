@@ -59,10 +59,19 @@ export function createTerminalShutdownActions(
       const rendererShutdownPtyIds = sortedUniquePtyIds(
         tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
       )
+      // Why own tabs only: panes of split or unclaimed tabs that another copy already stopped
+      // must not pick this copy's host.
+      const ownPtyIds = twinScope
+        ? sortedUniquePtyIds(
+            tabs
+              .filter((tab) => twinScope.tabIds.has(tab.id))
+              .flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
+          )
+        : rendererShutdownPtyIds
       const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
       const backendOwnsPtyTeardown = opts?.backendOwnsPtyTeardown === true
       const teardownOwner = twinScope
-        ? resolveHostTwinTeardownOwner(twinScope, rendererShutdownPtyIds, {
+        ? resolveHostTwinTeardownOwner(twinScope, ownPtyIds, {
             backendOwnsPtyTeardown,
             unattributedTabs
           })
@@ -83,10 +92,10 @@ export function createTerminalShutdownActions(
       const runtimeEnvironmentId =
         teardownOwner.kind === 'resolved' ? teardownOwner.runtimeEnvironmentId : null
       // Only renderer-bound ids emit pane exit callbacks; raw RPC handles never enter this guard.
-      // Why the split tabs' panes too: this copy's host-wide stop exits them before the batch's
-      // last copy stops their tab, so their exits must wait for a commit like the rest.
+      // Why the split tabs' panes too: a runtime copy's host-wide stop exits them before the
+      // batch's last copy stops their tab, so their exits must wait for a commit like the rest.
       const exitGuardPtyIds =
-        twinScope && unattributedTabs === 'skip'
+        twinScope && unattributedTabs === 'skip' && runtimeEnvironmentId
           ? sortedUniquePtyIds([...rendererShutdownPtyIds, ...twinScope.mixedTabPtyIds])
           : rendererShutdownPtyIds
       const sleepingAgentSessionRecords = keepIdentifiers

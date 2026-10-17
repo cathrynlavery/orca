@@ -501,4 +501,32 @@ describe('per-tab sleep fences of a twin', () => {
       f.local.hostId
     )
   })
+
+  it('the batch stops a split tab on its last copy without asking the runtime again', async () => {
+    const f = twin('local+runtime')
+    splitLocalTabAcrossCopies(f)
+
+    const outcome = await sleepWorktreesReportingFailures(both(f).toReversed())
+
+    expect(outcome.failedWorktreeIds).toEqual([])
+    expect(killedPtyIds()).toContain(f.local.ptyId)
+    const sleeps = runtimeCall.mock.calls.filter(([args]) => args.method === 'terminal.sleep')
+    expect(sleeps).toHaveLength(1)
+  })
+
+  it("leaves a split tab's local pane unguarded when the runtime copy failed first", async () => {
+    const f = twin('local+runtime')
+    splitLocalTabAcrossCopies(f)
+    runtimeCall.mockImplementation((args: RuntimeEnvironmentCallRequest) => {
+      if (args.method === 'terminal.sleep') {
+        throw new Error('runtime unavailable')
+      }
+      return answerLikeHost(args)
+    })
+
+    await sleepWorktreesReportingFailures(both(f).toReversed())
+
+    expect(f.store.getState().suppressedPtyExitIds[f.local.ptyId]).toBeUndefined()
+    expect(f.store.getState().isPtyShutdownPending(f.local.ptyId)).toBe(false)
+  })
 })
